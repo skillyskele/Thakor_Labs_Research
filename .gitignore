@@ -1,0 +1,22 @@
+# Build directories
+GNU ARM v12.2.1 - Default/
+autogen/
+
+# IDE-specific files
+.cproject
+.project
+.settings/
+
+# Build artifacts and temporary files
+*.o
+*.d
+*.axf
+*.bin
+*.s37
+*.hex
+*.map
+
+# Simplicity Studio specific
+.pdm/
+.projectlinkstore
+*.slps
