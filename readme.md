@@ -5,8 +5,6 @@ This project starts with Simplicity Studio's Bluetooth SoC-Empty example. From t
 
 The Bluetooth SoC-Empty example is a project that you can use as a template for any standalone Bluetooth application.
 
-> Note: this example expects a specific Gecko Bootloader to be present on your device. For details see the Troubleshooting section.
-
 ## Documentation 
 - More documentation is coming soon
 - As of now, this is the current operation. It's very one-after-another, and Bluetooth doesn't seem to operate asynchronously from the other processes yet (may change in the future when sampling rates go higher).
