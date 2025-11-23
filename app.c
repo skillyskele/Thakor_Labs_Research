@@ -44,7 +44,7 @@
 #include "gatt_db.h"
 #include "sl_status.h"
 #include "common_config.h"
-#include "circular_buffer.h"
+#include "ring_buffer.h"
 #include <stdio.h>
 
 // Set CLK_ADC to 10MHz
@@ -99,6 +99,8 @@ struct {
     uint32_t* send_buffer; // For BLE Process (dictated by OS)
 } ping_pong;
 
+static rbd_t _rbd = 0; // maybe this should explicitly be called BLE_rb, and given value 0
+static BluetoothPacket BluetoothPacketQueue[BLE_PACKET_QUEUE_SIZE];
 
 /**************************************************************************//**
  * @brief  GPIO Initializer
@@ -342,9 +344,15 @@ void LDMA_IRQHandler(void)
 
     LDMA_IntClear(LDMA_IF_DONE0);
 
+    BluetoothPacket* bp = (BluetoothPacket*)ping_pong.dma_buffer;
+
+
+
+    ring_buffer_put(_rbd, bp);
+
     ping_pong.dma_buffer = toggleBuffer(ping_pong.dma_buffer);
 
-    blueToothNotif = true;
+    blueToothNotif = _ring_buffer_full(_rb[0]); // blueToothNotif is toggled only when we detect a full buffer!
 
     // PERHAPS ENQUEUE THE RESULT TO THE BLUETOOTH QUEUE before setting bluetoothnotif true
 
@@ -356,6 +364,7 @@ void LDMA_IRQHandler(void)
 
 // The advertising set handle allocated from Bluetooth stack.
 static uint8_t advertising_set_handle = 0xff;
+
 
 // Application Init.
 void app_init(void)
@@ -383,7 +392,15 @@ void app_init(void)
     initLetimer();
 
     // Initialize our BLE Packet history!
-    circular_buffer_init(BLE_PACKET_QUEUE_SIZE);
+    rb_attr_t attr = {
+        .s_elem = sizeof(BluetoothPacketQueue[0]),
+        .n_elem = BLE_PACKET_QUEUE_SIZE,
+        .buffer = BluetoothPacketQueue
+    };
+
+    ring_buffer_init(&_rbd, &attr);
+
+
 
   #ifdef EM2DEBUG
   #if (EM2DEBUG == 1)
@@ -409,8 +426,13 @@ sl_status_t sendPacket() {
   // Same memory, different interpretation!
   // const means "i won't modify the DATA the pointer points to, i promise to only read it as a stream of data for bluetooth packet sending"
   // const is a promise to read only and not modify made by the program
-  sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, gattdb_iadc_result_len, (const uint8_t*) ping_pong.send_buffer); // PERHAPS EMPTY OUT QUEUE OR SOMETHING INSTEAD...
+  while (_ring_buffer_empty(_rb[0])) {
+      uint8_t data[sizeof(BluetoothPacket)];
+      if (!ring_buffer_get(_rbd, data)) {
+          sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, gattdb_iadc_result_len, data); // PERHAPS EMPTY OUT QUEUE OR SOMETHING INSTEAD...
 
+      }
+  }
   if (sc == SL_STATUS_OK) {
       packet_id++; //naturally wraps around from FFFFFFFF to 0
   }
