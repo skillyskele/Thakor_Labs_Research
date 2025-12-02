@@ -12,6 +12,8 @@
 #define SAMPLE_TYPE uint32_t
 
 #define BLE_PACKET_QUEUE_SIZE 16
+#define N_COMPRESSION   5
+
 
 typedef struct BluetoothPacket {
     SAMPLE_TYPE samples[SAMPLES_PER_BUFFER];

@@ -101,6 +101,8 @@ struct {
 
 static rbd_t _rbd = 0; // maybe this should explicitly be called BLE_rb, and given value 0
 static BluetoothPacket BluetoothPacketQueue[BLE_PACKET_QUEUE_SIZE];
+int packet_count = 0;
+bool compress_trigger; // set to false as it starts up
 
 /**************************************************************************//**
  * @brief  GPIO Initializer
@@ -346,7 +348,11 @@ void LDMA_IRQHandler(void)
 
     BluetoothPacket* bp = (BluetoothPacket*)ping_pong.dma_buffer;
 
+    packet_count++;
 
+    if (packet_count == N_COMPRESSION) {
+        compress_trigger = true;
+    }
 
     ring_buffer_put(_rbd, bp);
 
@@ -399,6 +405,8 @@ void app_init(void)
     };
 
     ring_buffer_init(&_rbd, &attr);
+
+    compress_trigger = false;
 
 
 
@@ -458,6 +466,15 @@ void app_process_action(void)
       sendPacket();
       blueToothNotif = false;
   }
+
+  if (compress_trigger) {
+          compress_trigger = false;
+
+          // Run heavy DSP/compression safely here, NOT in interrupt!
+          wavedec_compress(all_samples, ...);
+
+          // Buffer for BLE transmit, etc.
+      }
 }
 
 /**************************************************************************//**
