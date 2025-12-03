@@ -4,20 +4,23 @@
 
 #include <stdint.h>
 
-
-#define SAMPLES_PER_BUFFER               60
-#define NUM_SAMPLES               SAMPLES_PER_BUFFER // each DMA transfer is one buffer's worth
-#define PACKET_SIZE               SAMPLES_PER_BUFFER * SAMPLE_TYPE // or should it be sizeof(sample_type)
-
+// original ring buffer specs
+#define NUM_SAMPLES               60 // each DMA transfer is one packet's worth of samples. one packet has NUM_SAMPLES samples.
 #define SAMPLE_TYPE uint32_t
 
-#define BLE_PACKET_QUEUE_SIZE 16
+#define QUEUE_SIZE 16 // how large is the original ring buffer?
+
+// compression specs
 #define N_COMPRESSION   5
+#define COMPRESSED_QUEUE_SIZE 16
+
 
 
 typedef struct BluetoothPacket {
-    SAMPLE_TYPE samples[SAMPLES_PER_BUFFER];
-    uint32_t packet_id;
+
 } BluetoothPacket;
+
+typedef struct CompressedPacket {
+} CompressedPacket;
 
 #endif // COMMON_CONFIG_H_

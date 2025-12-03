@@ -87,22 +87,12 @@
  ******************************************************************************/
 
 /// Globally declared LDMA link descriptor
-LDMA_Descriptor_t sampleLoop[2]; // sampleLoop0 will link to sampleLoop1, which loops back around for ping pong buffer functionality
+LDMA_Descriptor_t descriptor;
 
 // buffer to store IADC samples
-struct {
-    uint32_t buffer_A[SAMPLES_PER_BUFFER+1]; // one more space added for a packet ID!
-    uint32_t buffer_B[SAMPLES_PER_BUFFER+1];
-    volatile bool buffer_A_full;
-    volatile bool buffer_B_full;
-    uint32_t* dma_buffer;  // For writing process (dictated by interrupts)
-    uint32_t* send_buffer; // For BLE Process (dictated by OS)
-} ping_pong;
 
-static rbd_t _rbd = 0; // maybe this should explicitly be called BLE_rb, and given value 0
-static BluetoothPacket BluetoothPacketQueue[BLE_PACKET_QUEUE_SIZE];
-int packet_count = 0;
-bool compress_trigger; // set to false as it starts up
+
+static rbd_t _rbd = 0;
 
 /**************************************************************************//**
  * @brief  GPIO Initializer
@@ -294,7 +284,8 @@ void initLetimer(void)
  * @param[in] size
  *   size of the array
  *****************************************************************************/
-void initLDMA(uint32_t *buffer0, uint32_t *buffer1, uint32_t size)
+
+void initLDMA(uint32_t *buffer, uint32_t size)
 {
   LDMA_Init_t init = LDMA_INIT_DEFAULT;
 
@@ -303,28 +294,22 @@ void initLDMA(uint32_t *buffer0, uint32_t *buffer1, uint32_t size)
   LDMA_TransferCfg_t transferCfg =
     LDMA_TRANSFER_CFG_PERIPHERAL(ldmaPeripheralSignal_IADC0_IADC_SCAN);
 
-  // Set up descriptors for ping pong buffers
-  //descriptor1 = (LDMA_Descriptor_t)LDMA_DESCRIPTOR_LINKREL_P2M_WORD(&IADC0->SCANFIFODATA, buffer, size, 0);
+  // Set up descriptors for dual buffer transfer
+  descriptor = (LDMA_Descriptor_t)LDMA_DESCRIPTOR_LINKREL_P2M_WORD(&IADC0->SCANFIFODATA, buffer, size, 0);
 
-  sampleLoop[0] = (LDMA_Descriptor_t)LDMA_DESCRIPTOR_LINKREL_P2M_WORD(
-          &IADC0->SCANFIFODATA, buffer0, size, 1);   // Link to next (+1)
+  // Loop of NUM_SAMPLES, run continuously
+  descriptor.xfer.decLoopCnt = 0;
+  descriptor.xfer.xferCnt = NUM_SAMPLES - 1; // 1 less than desired transfer count
 
-  sampleLoop[1] = (LDMA_Descriptor_t)LDMA_DESCRIPTOR_LINKREL_P2M_WORD(
-          &IADC0->SCANFIFODATA, buffer1, size, -1);  // Link back around (-1)
-
-  sampleLoop[0].xfer.xferCnt = size - 1;  // Transfer count
-  sampleLoop[0].xfer.doneIfs = 1;         // Interrupt when done
-
-  sampleLoop[1].xfer.xferCnt = size - 1;  // Transfer count
-  sampleLoop[1].xfer.doneIfs = 1;         // Interrupt when done
-
-
+  // Interrupt upon transfer complete
+  descriptor.xfer.doneIfs = 1;
+  descriptor.xfer.ignoreSrec = 0;
 
   // Initialize LDMA with default configuration
   LDMA_Init(&init);
 
   // Start transfer, LDMA will sample the IADC NUM_SAMPLES time, and then interrupt
-  LDMA_StartTransfer(IADC_LDMA_CH, &transferCfg, &sampleLoop[0]);
+  LDMA_StartTransfer(IADC_LDMA_CH, &transferCfg, &descriptor);
 }
 
 volatile bool blueToothNotif = false;
@@ -352,13 +337,12 @@ void LDMA_IRQHandler(void)
 
     if (packet_count == N_COMPRESSION) {
         compress_trigger = true;
+        packet_count = 0;
     }
 
-    ring_buffer_put(_rbd, bp);
+    ring_buffer_put(_rbd, bp); // bp is where the packets go to await compression
 
     ping_pong.dma_buffer = toggleBuffer(ping_pong.dma_buffer);
-
-    blueToothNotif = _ring_buffer_full(_rb[0]); // blueToothNotif is toggled only when we detect a full buffer!
 
     // PERHAPS ENQUEUE THE RESULT TO THE BLUETOOTH QUEUE before setting bluetoothnotif true
 
@@ -385,11 +369,9 @@ void app_init(void)
     // Initialize the IADC
     initIADC();
 
-    ping_pong.dma_buffer = ping_pong.buffer_A; // we'll start with buffer A
-    ping_pong.send_buffer = ping_pong.buffer_A; // we'll have BLE start from sending buffer A as well, though it won't activate until the notif flag has been set
 
     // Initialize LDMA
-    initLDMA(ping_pong.buffer_A, ping_pong.buffer_B, NUM_SAMPLES);
+    initLDMA(sampleQueue, NUM_SAMPLES);
 
     // Initialize LFXO
     initClock();
@@ -397,16 +379,14 @@ void app_init(void)
     // Initialize the LETIMER
     initLetimer();
 
-    // Initialize our BLE Packet history!
+    // Initialize the buffers.
     rb_attr_t attr = {
-        .s_elem = sizeof(BluetoothPacketQueue[0]),
-        .n_elem = BLE_PACKET_QUEUE_SIZE,
-        .buffer = BluetoothPacketQueue
+        .s_elem = SAMPLE_TYPE;
+        .n_elem = QUEUE_SIZE;
+        .buffer = sampleQueue;
+        .
     };
-
-    ring_buffer_init(&_rbd, &attr);
-
-    compress_trigger = false;
+    ring_buffer_init
 
 
 
@@ -468,10 +448,15 @@ void app_process_action(void)
   }
 
   if (compress_trigger) {
+
           compress_trigger = false;
 
           // Run heavy DSP/compression safely here, NOT in interrupt!
-          wavedec_compress(all_samples, ...);
+          // this function is responsible for emptying the ble queue as well.
+          wavedec_compress(all_samples, ...); // it's going to automatically update my CompressedPacketQueue
+
+          blueToothNotif = _ring_buffer_full(_rb[1]); // blueToothNotif is toggled only when we detect a full compression buffer!
+
 
           // Buffer for BLE transmit, etc.
       }
