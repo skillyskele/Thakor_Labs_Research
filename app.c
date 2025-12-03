@@ -93,6 +93,7 @@ LDMA_Descriptor_t descriptor;
 
 
 static rbd_t _rbd = 0;
+static uint32_t sampleQueue[NUM_SAMPLES]; // just a continuous array of uint32_t
 
 /**************************************************************************//**
  * @brief  GPIO Initializer
@@ -314,14 +315,6 @@ void initLDMA(uint32_t *buffer, uint32_t size)
 
 volatile bool blueToothNotif = false;
 
-uint32_t* toggleBuffer(uint32_t* current_buffer) {
-    if (current_buffer == ping_pong.buffer_A) {
-        return ping_pong.buffer_B;
-    } else {
-        return ping_pong.buffer_A;
-    }
-}
-
 
 /**************************************************************************//**
  * @brief  LDMA Handler
@@ -331,20 +324,6 @@ void LDMA_IRQHandler(void)
 
     LDMA_IntClear(LDMA_IF_DONE0);
 
-    BluetoothPacket* bp = (BluetoothPacket*)ping_pong.dma_buffer;
-
-    packet_count++;
-
-    if (packet_count == N_COMPRESSION) {
-        compress_trigger = true;
-        packet_count = 0;
-    }
-
-    ring_buffer_put(_rbd, bp); // bp is where the packets go to await compression
-
-    ping_pong.dma_buffer = toggleBuffer(ping_pong.dma_buffer);
-
-    // PERHAPS ENQUEUE THE RESULT TO THE BLUETOOTH QUEUE before setting bluetoothnotif true
 
   // Toggle LED0 to notify that transfers are complete
   GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
@@ -384,7 +363,6 @@ void app_init(void)
         .s_elem = SAMPLE_TYPE;
         .n_elem = QUEUE_SIZE;
         .buffer = sampleQueue;
-        .
     };
     ring_buffer_init
 
