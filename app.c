@@ -91,9 +91,18 @@ LDMA_Descriptor_t descriptor;
 
 // buffer to store IADC samples
 
+uint32_t scanBuffer[NUM_SAMPLES];
 
 static rbd_t _rbd = 0;
-static uint32_t sampleQueue[NUM_SAMPLES]; // just a continuous array of uint32_t
+static rbd_t sampleQidx = 0;
+static SAMPLE_TYPE sampleQueue[SAMPLE_Q_SIZE]; // just a continuous array of uint32_t
+static uint8_t sampleCount;
+
+//static rbd_t compressedQidx;
+static bool compress_trigger;
+//static COMPRESSION_TYPE compressedQueue[COMPRESSED_Q_SIZE];
+static COMPRESSION_TYPE compressionTemp[COMPRESSED_Q_SIZE];
+static uint8_t curIdx;
 
 /**************************************************************************//**
  * @brief  GPIO Initializer
@@ -323,6 +332,18 @@ void LDMA_IRQHandler(void)
 {
 
     LDMA_IntClear(LDMA_IF_DONE0);
+    int err = ring_buffer_put(sampleQidx, scanBuffer);
+    if (!err) {
+        sampleCount++;
+        if (sampleCount == N_COMPRESSION) {
+            compress_trigger = true;
+            sampleCount = 0;
+        }
+    } else {
+        printf("you ran into an error!"); // just meant to catch the debugger as i step through.
+
+      return; // if the error is nonzero, then we the buffer was full or something failed!
+    }
 
 
   // Toggle LED0 to notify that transfers are complete
@@ -333,7 +354,6 @@ void LDMA_IRQHandler(void)
 
 // The advertising set handle allocated from Bluetooth stack.
 static uint8_t advertising_set_handle = 0xff;
-
 
 // Application Init.
 void app_init(void)
@@ -350,7 +370,7 @@ void app_init(void)
 
 
     // Initialize LDMA
-    initLDMA(sampleQueue, NUM_SAMPLES);
+    initLDMA(scanBuffer, NUM_SAMPLES);
 
     // Initialize LFXO
     initClock();
@@ -359,12 +379,26 @@ void app_init(void)
     initLetimer();
 
     // Initialize the buffers.
-    rb_attr_t attr = {
-        .s_elem = SAMPLE_TYPE;
-        .n_elem = QUEUE_SIZE;
-        .buffer = sampleQueue;
+    rb_attr_t attr1 = {
+        .s_elem = sizeof(SAMPLE_TYPE),
+        .n_elem = SAMPLE_Q_SIZE,
+        .buffer = sampleQueue,
     };
-    ring_buffer_init
+    sampleQidx = 0;
+    ring_buffer_init(&_rbd, &attr1); // make sampleQueue
+
+    sampleCount = 0;
+
+//    rb_attr_t attr2 = {
+//        .s_elem = sizeof(COMPRESSION_TYPE),
+//        .n_elem = COMPRESSED_Q_SIZE,
+//        .buffer = compressedQueue,
+//    };
+    //compressedQidx = 1;
+    //ring_buffer_init(&_rbd, &attr1);
+
+    curIdx = 0;
+
 
 
 
@@ -384,28 +418,18 @@ sl_status_t sendPacket() {
 // #define gattdb_iadc_result                    27
   sl_status_t sc;
 
-  ping_pong.send_buffer[NUM_SAMPLES] = packet_id;
 
-  // Little note on casting the active buffer pointer to uint8_t
-  // As uint32_t*: reads 4 bytes at a time as integers
-  // As uint8_t*: reads 1 byte at a time as bytes
-  // Same memory, different interpretation!
-  // const means "i won't modify the DATA the pointer points to, i promise to only read it as a stream of data for bluetooth packet sending"
-  // const is a promise to read only and not modify made by the program
-  while (_ring_buffer_empty(_rb[0])) {
-      uint8_t data[sizeof(BluetoothPacket)];
-      if (!ring_buffer_get(_rbd, data)) {
-          sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, gattdb_iadc_result_len, data); // PERHAPS EMPTY OUT QUEUE OR SOMETHING INSTEAD...
-
-      }
-  }
+//  while (_ring_buffer_empty(_rb[0])) { // grab data out the right buffer. maybe the compression buffer
+//
+//      uint8_t data[sizeof(BluetoothPacket)]; // send one packet at a time!
+//      if (!ring_buffer_get(_rbd, data)) {
+//          sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, gattdb_iadc_result_len, data); // PERHAPS EMPTY OUT QUEUE OR SOMETHING INSTEAD...
+//
+//      }
+//  }
   if (sc == SL_STATUS_OK) {
-      packet_id++; //naturally wraps around from FFFFFFFF to 0
   }
 
-  circular_buffer_enqueue(ping_pong.send_buffer); // purely for watching the past packets that have been sent
-
-  ping_pong.send_buffer = toggleBuffer(ping_pong.send_buffer); // after sending, move to the next buffer to send
 
 
   if (sc != SL_STATUS_OK) { return sc; }
@@ -428,12 +452,27 @@ void app_process_action(void)
   if (compress_trigger) {
 
           compress_trigger = false;
+          int i = 0;
+
+          while ((i < N_COMPRESSION) && !(_ring_buffer_empty(&_rb[sampleQidx]))) {
+               // some pointer to compressionQ *p
+              ring_buffer_get(sampleQidx, &compressionTemp[curIdx]); // just demo dequeuing behavior
+              // for now, the uin32_t from sampleQidx got truncated lololol....
+              // doesn't matter we'll compress and put shi in a packet lololol
+              i++;
+
+              curIdx++;
+              if (curIdx == COMPRESSED_Q_SIZE) { // i need to place checks to ensure one process doesn't overrun the other.
+                  blueToothNotif = true;
+                  curIdx = 0;
+              }
+          }
 
           // Run heavy DSP/compression safely here, NOT in interrupt!
           // this function is responsible for emptying the ble queue as well.
-          wavedec_compress(all_samples, ...); // it's going to automatically update my CompressedPacketQueue
+          //wavedec_compress(all_samples, ...); // it's going to automatically update my CompressedPacketQueue
 
-          blueToothNotif = _ring_buffer_full(_rb[1]); // blueToothNotif is toggled only when we detect a full compression buffer!
+          //blueToothNotif = _ring_buffer_full(_rb[1]); // blueToothNotif is toggled only when we detect a full compression buffer!
 
 
           // Buffer for BLE transmit, etc.

@@ -22,11 +22,10 @@ struct ring_buffer
 };
 
 # define RING_BUFFER_MAX 2 // one for BLE packets and one for compressed BLE packets
-static struct ring_buffer _rb[RING_BUFFER_MAX]; // viewable from app.c as well as ring_buffer.c
-
+extern struct ring_buffer _rb[RING_BUFFER_MAX]; // defined in ring_buffer.c
 int ring_buffer_init(rbd_t *rbd, rb_attr_t *attr);
-static int _ring_buffer_full(struct ring_buffer *rb);
-static int _ring_buffer_empty(struct ring_buffer *rb);
+int _ring_buffer_full(struct ring_buffer *rb);
+int _ring_buffer_empty(struct ring_buffer *rb);
 int ring_buffer_put(rbd_t rbd, const void *data);
 int ring_buffer_get(rbd_t rbd, void *data);
 

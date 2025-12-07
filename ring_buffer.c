@@ -1,3 +1,7 @@
+#include "ring_buffer.h"
+#include <string.h>
+
+struct ring_buffer _rb[RING_BUFFER_MAX];  // actual storage of _rb
 
 int ring_buffer_init(rbd_t *rbd, rb_attr_t *attr)
 {
@@ -24,12 +28,14 @@ int ring_buffer_init(rbd_t *rbd, rb_attr_t *attr)
     return err;
 }
 
-static int _ring_buffer_full(struct ring_buffer *rb)
+int _ring_buffer_full(struct ring_buffer *rb)
 {
     return ((rb->head - rb->tail) == rb->n_elem) ? 1 : 0;
 }
 
-static int _ring_buffer_empty(struct ring_buffer *rb)
+
+
+int _ring_buffer_empty(struct ring_buffer *rb)
 {
     return ((rb->head - rb->tail) == 0U) ? 1 : 0;
 }
