@@ -95,13 +95,13 @@ uint32_t scanBuffer[NUM_SAMPLES];
 
 static rbd_t _rbd = 0;
 static rbd_t sampleQidx = 0;
-static SAMPLE_TYPE sampleQueue[SAMPLE_Q_SIZE]; // just a continuous array of uint32_t
+static SampleSlotType sampleQueue[SAMPLE_Q_SIZE]; // just a continuous array of uint32_t
 static uint8_t sampleCount;
 
 //static rbd_t compressedQidx;
 static bool compress_trigger;
 //static COMPRESSION_TYPE compressedQueue[COMPRESSED_Q_SIZE];
-static COMPRESSION_TYPE compressionTemp[COMPRESSED_Q_SIZE];
+static COMPRESSION_TYPE compressionTemp[COMPRESSED_BUFFER_SIZE];
 static uint8_t curIdx;
 
 /**************************************************************************//**
@@ -335,7 +335,7 @@ void LDMA_IRQHandler(void)
     int err = ring_buffer_put(sampleQidx, scanBuffer);
     if (!err) {
         sampleCount++;
-        if (sampleCount == N_COMPRESSION) {
+        if (sampleCount == COMPRESSION_LIMIT) {
             compress_trigger = true;
             sampleCount = 0;
         }
@@ -380,7 +380,7 @@ void app_init(void)
 
     // Initialize the buffers.
     rb_attr_t attr1 = {
-        .s_elem = sizeof(SAMPLE_TYPE),
+        .s_elem = NUM_SAMPLES * sizeof(SAMPLE_TYPE), // i want to make one slot of sampleQueue, NUMSAMPLES amount of SAMPLETYPE, or 60 uint32_t.
         .n_elem = SAMPLE_Q_SIZE,
         .buffer = sampleQueue,
     };
@@ -412,28 +412,35 @@ void app_init(void)
 }
 
 
+// we get 244 bytes per bluetooth packet
 static uint32_t packet_id = 0;  // Global packet counter
+#define MAX_SAMPLES_PER_PAYLOAD 16 // Max number of samples per BLE packet
+#define PACKET_ID_SIZE sizeof(uint32_t)
+#define BUFFER_MEMBER_SIZE sizeof(COMPRESSION_TYPE)
 
 sl_status_t sendPacket() {
-// #define gattdb_iadc_result                    27
-  sl_status_t sc;
+  sl_status_t sc = SL_STATUS_OK;
+  // find the number of samples that can fit
+  size_t bufferIdx = 0;
+  size_t samples_that_can_fit = 0; // type should match max # elements compressionTemp can hold, look at COMPRESSED_BUFFER_SIZE
+  size_t samples_used = 0;
+  while (bufferIdx < COMPRESSED_BUFFER_SIZE){ // since we're just, emptying out the whole thing
+    samples_that_can_fit = MAX_SAMPLES_PER_PAYLOAD - bufferIdx;
+    samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
+
+    // prepare packet: id, payload
+    uint8_t packet[PACKET_ID_SIZE + samples_used * BUFFER_MEMBER_SIZE];
+    memcpy(packet, &packet_id, PACKET_ID_SIZE);
+    memcpy(packet + PACKET_ID_SIZE, &compressTemp[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
+    sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, PACKET_ID_SIZE + samples_used * BUFFER_MEMBER_SIZE, packet);
+    if (sc != SL_STATUS_OK) {
+        break;
+    }
 
 
-//  while (_ring_buffer_empty(_rb[0])) { // grab data out the right buffer. maybe the compression buffer
-//
-//      uint8_t data[sizeof(BluetoothPacket)]; // send one packet at a time!
-//      if (!ring_buffer_get(_rbd, data)) {
-//          sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, gattdb_iadc_result_len, data); // PERHAPS EMPTY OUT QUEUE OR SOMETHING INSTEAD...
-//
-//      }
-//  }
-  if (sc == SL_STATUS_OK) {
+    bufferIdx += samples_used;
+    packet_id += 1;
   }
-
-
-
-  if (sc != SL_STATUS_OK) { return sc; }
-
   return sc;
 }
 
@@ -444,38 +451,27 @@ void app_process_action(void)
 
   }
 
-  if (blueToothNotif) {
-      sendPacket();
-      blueToothNotif = false;
-  }
-
   if (compress_trigger) {
 
           compress_trigger = false;
           int i = 0;
 
-          while ((i < N_COMPRESSION) && !(_ring_buffer_empty(&_rb[sampleQidx]))) {
+          while ((i < N_COMPRESSION) && !(_ring_buffer_empty(&_rb[sampleQidx]))) { // so N_COMPRESSION should define how many uint32 slots we want to grab out of sampleQidx
                // some pointer to compressionQ *p
-              ring_buffer_get(sampleQidx, &compressionTemp[curIdx]); // just demo dequeuing behavior
-              // for now, the uin32_t from sampleQidx got truncated lololol....
-              // doesn't matter we'll compress and put shi in a packet lololol
+              ring_buffer_get(sampleQidx, &compressionTemp[curIdx]); // compressionTemp is of type uint32_t[], so it should realign each individual sample
               i++;
 
+              // right now, i aim to fill up compressionTemp fully. we fill with N_COMPRESSION * NUM_SAMPLES amount of individual samples.
+
               curIdx++;
-              if (curIdx == COMPRESSED_Q_SIZE) { // i need to place checks to ensure one process doesn't overrun the other.
-                  blueToothNotif = true;
-                  curIdx = 0;
-              }
+
           }
+          blueToothNotif = true;
+          curIdx = 0;
 
-          // Run heavy DSP/compression safely here, NOT in interrupt!
-          // this function is responsible for emptying the ble queue as well.
-          //wavedec_compress(all_samples, ...); // it's going to automatically update my CompressedPacketQueue
+          // compress the compressionTemp
+          sendPacket();
 
-          //blueToothNotif = _ring_buffer_full(_rb[1]); // blueToothNotif is toggled only when we detect a full compression buffer!
-
-
-          // Buffer for BLE transmit, etc.
       }
 }
 

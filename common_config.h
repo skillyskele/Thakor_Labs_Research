@@ -7,12 +7,17 @@
 // original ring buffer specs
 #define NUM_SAMPLES               60 // each DMA transfer is one packet's worth of samples. one packet has NUM_SAMPLES samples.
 #define SAMPLE_TYPE uint32_t
-#define SAMPLE_Q_SIZE 16 // how large is the original ring buffer?
+#define SAMPLE_Q_SIZE  16// how large is the original ring buffer?
+typedef struct {
+    SAMPLE_TYPE samples[NUM_SAMPLES];
+    // Add more fields if needed (e.g., timestamp, id)
+} SampleSlotType;
 
 // compression specs
+#define COMPRESSION_LIMIT 8
 #define N_COMPRESSION   4
 #define COMPRESSION_TYPE uint32_t
-#define COMPRESSED_Q_SIZE 8
+#define COMPRESSED_BUFFER_SIZE 480
 
 
 
