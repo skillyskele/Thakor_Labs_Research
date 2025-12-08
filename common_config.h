@@ -14,10 +14,10 @@ typedef struct {
 } SampleSlotType;
 
 // compression specs
-#define COMPRESSION_LIMIT 8
+#define COMPRESSION_THRESHOLD 8
 #define N_COMPRESSION   4
 #define COMPRESSION_TYPE uint32_t
-#define COMPRESSED_BUFFER_SIZE 480
+#define COMPRESSED_BUFFER_SIZE 240
 
 
 

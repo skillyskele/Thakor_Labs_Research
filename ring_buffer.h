@@ -28,5 +28,6 @@ int _ring_buffer_full(struct ring_buffer *rb);
 int _ring_buffer_empty(struct ring_buffer *rb);
 int ring_buffer_put(rbd_t rbd, const void *data);
 int ring_buffer_get(rbd_t rbd, void *data);
+size_t ring_buffer_length(rbd_t rbd);
 
 #endif // RING_BUFFER_H_

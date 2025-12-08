@@ -104,6 +104,8 @@ static bool compress_trigger;
 static COMPRESSION_TYPE compressionTemp[COMPRESSED_BUFFER_SIZE];
 static uint8_t curIdx;
 
+static uint8_t samples_lost = 0;
+
 /**************************************************************************//**
  * @brief  GPIO Initializer
  *****************************************************************************/
@@ -332,17 +334,14 @@ void LDMA_IRQHandler(void)
 {
 
     LDMA_IntClear(LDMA_IF_DONE0);
-    int err = ring_buffer_put(sampleQidx, scanBuffer);
-    if (!err) {
-        sampleCount++;
-        if (sampleCount == COMPRESSION_LIMIT) {
-            compress_trigger = true;
-            sampleCount = 0;
-        }
-    } else {
-        printf("you ran into an error!"); // just meant to catch the debugger as i step through.
+    uint16_t iadcResults[NUM_SAMPLES];
 
-      return; // if the error is nonzero, then we the buffer was full or something failed!
+    for (uint32_t i = 0; i < NUM_SAMPLES; i++)
+        iadcResults[i] = (uint16_t)(scanBuffer[i] & 0xFFF);
+    int err = ring_buffer_put(sampleQidx, iadcResults); // put sizeof(iadcResults) bytes into sampleQueue[head]
+
+    if (err) {
+      samples_lost++;
     }
 
 
@@ -425,13 +424,13 @@ sl_status_t sendPacket() {
   size_t samples_that_can_fit = 0; // type should match max # elements compressionTemp can hold, look at COMPRESSED_BUFFER_SIZE
   size_t samples_used = 0;
   while (bufferIdx < COMPRESSED_BUFFER_SIZE){ // since we're just, emptying out the whole thing
-    samples_that_can_fit = MAX_SAMPLES_PER_PAYLOAD - bufferIdx;
+    samples_that_can_fit = COMPRESSED_BUFFER_SIZE - bufferIdx;
     samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
 
     // prepare packet: id, payload
     uint8_t packet[PACKET_ID_SIZE + samples_used * BUFFER_MEMBER_SIZE];
     memcpy(packet, &packet_id, PACKET_ID_SIZE);
-    memcpy(packet + PACKET_ID_SIZE, &compressTemp[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
+    memcpy(packet + PACKET_ID_SIZE, &compressionTemp[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
     sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, PACKET_ID_SIZE + samples_used * BUFFER_MEMBER_SIZE, packet);
     if (sc != SL_STATUS_OK) {
         break;
@@ -451,14 +450,13 @@ void app_process_action(void)
 
   }
 
-  if (compress_trigger) {
+  if (ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) {
 
-          compress_trigger = false;
           int i = 0;
 
           while ((i < N_COMPRESSION) && !(_ring_buffer_empty(&_rb[sampleQidx]))) { // so N_COMPRESSION should define how many uint32 slots we want to grab out of sampleQidx
                // some pointer to compressionQ *p
-              ring_buffer_get(sampleQidx, &compressionTemp[curIdx]); // compressionTemp is of type uint32_t[], so it should realign each individual sample
+              ring_buffer_get(sampleQidx, &compressionTemp[curIdx*NUM_SAMPLES]); // compressionTemp is of type uint32_t[], so it should realign each individual sample
               i++;
 
               // right now, i aim to fill up compressionTemp fully. we fill with N_COMPRESSION * NUM_SAMPLES amount of individual samples.

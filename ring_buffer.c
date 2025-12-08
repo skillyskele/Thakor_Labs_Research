@@ -70,4 +70,7 @@ int ring_buffer_get(rbd_t rbd, void *data)
     return err;
 }
 
+size_t ring_buffer_length(rbt_t rbd) { return (_rb[rbd]->head - _rb[rbd]->tail);}
+
+
 // const size_t offset = (_rb[rbd].head % _rb[rbd].n_elem) * _rb[rbd].s_elem;
