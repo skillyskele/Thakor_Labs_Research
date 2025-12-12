@@ -334,10 +334,10 @@ void LDMA_IRQHandler(void)
 {
 
     LDMA_IntClear(LDMA_IF_DONE0);
-    uint16_t iadcResults[NUM_SAMPLES];
+    SAMPLE_TYPE iadcResults[NUM_SAMPLES];
 
     for (uint32_t i = 0; i < NUM_SAMPLES; i++)
-        iadcResults[i] = (uint16_t)(scanBuffer[i] & 0xFFF);
+        iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
     int err = ring_buffer_put(sampleQidx, iadcResults); // put sizeof(iadcResults) bytes into sampleQueue[head]
 
     if (err) {
@@ -414,7 +414,7 @@ void app_init(void)
 // we get 244 bytes per bluetooth packet
 static uint32_t packet_id = 0;  // Global packet counter
 #define MAX_SAMPLES_PER_PAYLOAD 16 // Max number of samples per BLE packet
-#define PACKET_ID_SIZE sizeof(uint32_t)
+#define PACKET_ID_SIZE sizeof(uint16_t) //34 bytes 16 * uint16_t, 1 uint16_t
 #define BUFFER_MEMBER_SIZE sizeof(COMPRESSION_TYPE)
 
 sl_status_t sendPacket() {
@@ -467,7 +467,8 @@ void app_process_action(void)
           blueToothNotif = true;
           curIdx = 0;
 
-          // compress the compressionTemp
+          compress(COMPRESSION_RATIO, compressionTemp, N_COMPRESSION, NUM_LEVELS, NUM_CHANNELS);
+          // chat should it be &compressionTemp[0] or what?
           sendPacket();
 
       }

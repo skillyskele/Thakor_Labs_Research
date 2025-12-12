@@ -47,7 +47,7 @@ int ring_buffer_put(rbd_t rbd, const void *data)
     if ((rbd < RING_BUFFER_MAX) && (_ring_buffer_full(&_rb[rbd]) == 0)) {
         const size_t offset = (_rb[rbd].head & (_rb[rbd].n_elem - 1)) * _rb[rbd].s_elem;
         memcpy(&(_rb[rbd].buf[offset]), data, _rb[rbd].s_elem);
-        _rb[rbd].head++;
+        _rb[rbd].head++; // careful cuz now it doesn't actually point to the front of the array, just counts how many insertions there were
     } else {
         err = -1;
     }
@@ -70,7 +70,7 @@ int ring_buffer_get(rbd_t rbd, void *data)
     return err;
 }
 
-size_t ring_buffer_length(rbt_t rbd) { return (_rb[rbd]->head - _rb[rbd]->tail);}
+size_t ring_buffer_length(rbd_t rbd) { return (_rb[rbd].head - _rb[rbd].tail);}
 
 
 // const size_t offset = (_rb[rbd].head % _rb[rbd].n_elem) * _rb[rbd].s_elem;

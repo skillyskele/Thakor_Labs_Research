@@ -46,7 +46,6 @@ component:
 - {id: emlib_letimer}
 - {id: gatt_configuration}
 - {id: gatt_service_device_information_override}
-- {id: in_place_ota_dfu}
 - {id: mpu}
 - {id: rail_util_pti}
 - {id: sl_main}

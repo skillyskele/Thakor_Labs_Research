@@ -16,7 +16,7 @@ struct ring_buffer
 {
     size_t s_elem;
     size_t n_elem;
-    uint8_t *buf; // does this force my buf to be uint8 or  can i still configure
+    uint8_t *buf;
     volatile size_t head;
     volatile size_t tail;
 };
