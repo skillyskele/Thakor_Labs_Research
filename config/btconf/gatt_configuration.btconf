@@ -8,7 +8,7 @@
 
     <!--Bionode 2.0-->
     <characteristic const="false" id="device_name" name="Bionode 2.0" sourceId="org.bluetooth.characteristic.gap.device_name" uuid="2A00">
-      <value length="13" type="utf-8" variable_length="false">Empty Example</value>
+      <value length="13" type="utf-8" variable_length="false">BionodeWavelet</value>
       <properties>
         <read authenticated="false" bonded="false" encrypted="false"/>
         <write authenticated="false" bonded="false" encrypted="false"/>

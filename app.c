@@ -96,7 +96,7 @@ uint32_t scanBuffer[NUM_SAMPLES];
 static rbd_t _rbd = 0;
 static rbd_t sampleQidx = 0;
 static SampleSlotType sampleQueue[SAMPLE_Q_SIZE]; // just a continuous array of uint32_t
-static uint8_t sampleCount;
+static uint8_t sampleCount = 0;
 
 //static rbd_t compressedQidx;
 static bool compress_trigger;
@@ -264,6 +264,7 @@ void initClock(void)
 void initLetimer(void)
 {
   LETIMER_Init_TypeDef letimerInit = LETIMER_INIT_DEFAULT;
+  letimerInit.enable = false;
 
   // Enable LETIMER0 clock tree
   CMU_ClockEnable(cmuClock_LETIMER0, true);
@@ -334,14 +335,20 @@ void LDMA_IRQHandler(void)
 {
 
     LDMA_IntClear(LDMA_IF_DONE0);
-    SAMPLE_TYPE iadcResults[NUM_SAMPLES];
+//    SAMPLE_TYPE iadcResults[NUM_SAMPLES];
+//
+//    for (uint32_t i = 0; i < NUM_SAMPLES; i++)
+//        iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
+//    int err = ring_buffer_put(sampleQidx, iadcResults); // put sizeof(iadcResults) bytes into sampleQueue[head]
+//
+//    if (err) {
+//      samples_lost++;
+//    }
 
-    for (uint32_t i = 0; i < NUM_SAMPLES; i++)
-        iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
-    int err = ring_buffer_put(sampleQidx, iadcResults); // put sizeof(iadcResults) bytes into sampleQueue[head]
-
-    if (err) {
-      samples_lost++;
+    sampleCount++;
+    if (sampleCount == NUM_SAMPLES) {
+        blueToothNotif = true;
+        sampleCount = 0;
     }
 
 
@@ -378,15 +385,15 @@ void app_init(void)
     initLetimer();
 
     // Initialize the buffers.
-    rb_attr_t attr1 = {
-        .s_elem = NUM_SAMPLES * sizeof(SAMPLE_TYPE), // i want to make one slot of sampleQueue, NUMSAMPLES amount of SAMPLETYPE, or 60 uint32_t.
-        .n_elem = SAMPLE_Q_SIZE,
-        .buffer = sampleQueue,
-    };
-    sampleQidx = 0;
-    ring_buffer_init(&_rbd, &attr1); // make sampleQueue
-
-    sampleCount = 0;
+//    rb_attr_t attr1 = {
+//        .s_elem = NUM_SAMPLES * sizeof(SAMPLE_TYPE), // i want to make one slot of sampleQueue, NUMSAMPLES amount of SAMPLETYPE, or 60 uint32_t.
+//        .n_elem = SAMPLE_Q_SIZE,
+//        .buffer = sampleQueue,
+//    };
+//    sampleQidx = 0;
+//    ring_buffer_init(&_rbd, &attr1); // make sampleQueue
+//
+//    sampleCount = 0;
 
 //    rb_attr_t attr2 = {
 //        .s_elem = sizeof(COMPRESSION_TYPE),
@@ -396,7 +403,7 @@ void app_init(void)
     //compressedQidx = 1;
     //ring_buffer_init(&_rbd, &attr1);
 
-    curIdx = 0;
+    //curIdx = 0;
 
 
 
@@ -420,26 +427,30 @@ static uint32_t packet_id = 0;  // Global packet counter
 sl_status_t sendPacket() {
   sl_status_t sc = SL_STATUS_OK;
   // find the number of samples that can fit
-  size_t bufferIdx = 0;
-  size_t samples_that_can_fit = 0; // type should match max # elements compressionTemp can hold, look at COMPRESSED_BUFFER_SIZE
-  size_t samples_used = 0;
-  while (bufferIdx < COMPRESSED_BUFFER_SIZE){ // since we're just, emptying out the whole thing
-    samples_that_can_fit = COMPRESSED_BUFFER_SIZE - bufferIdx;
-    samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
+//  size_t bufferIdx = 0;
+//  size_t samples_that_can_fit = 0; // type should match max # elements compressionTemp can hold, look at COMPRESSED_BUFFER_SIZE
+//  size_t samples_used = 0;
+//  while (bufferIdx < COMPRESSED_BUFFER_SIZE){ // since we're just, emptying out the whole thing
+//    samples_that_can_fit = COMPRESSED_BUFFER_SIZE - bufferIdx;
+//    samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
+//
+//    // prepare packet: id, payload
+//    uint8_t packet[PACKET_ID_SIZE + samples_used * BUFFER_MEMBER_SIZE];
+//    memcpy(packet, &packet_id, PACKET_ID_SIZE);
+//    memcpy(packet + PACKET_ID_SIZE, &compressionTemp[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
+//    sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, PACKET_ID_SIZE + samples_used * BUFFER_MEMBER_SIZE, packet);
+//    if (sc != SL_STATUS_OK) {
+//        break;
+//    }
+//
+//
+//    bufferIdx += samples_used;
+//    packet_id += 1;
+//  }
+  uint8_t packet[gattdb_iadc_result_len] = {sampleCount};
+  sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, gattdb_iadc_result_len, packet);
 
-    // prepare packet: id, payload
-    uint8_t packet[PACKET_ID_SIZE + samples_used * BUFFER_MEMBER_SIZE];
-    memcpy(packet, &packet_id, PACKET_ID_SIZE);
-    memcpy(packet + PACKET_ID_SIZE, &compressionTemp[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
-    sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, PACKET_ID_SIZE + samples_used * BUFFER_MEMBER_SIZE, packet);
-    if (sc != SL_STATUS_OK) {
-        break;
-    }
 
-
-    bufferIdx += samples_used;
-    packet_id += 1;
-  }
   return sc;
 }
 
@@ -450,28 +461,33 @@ void app_process_action(void)
 
   }
 
-  if (ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) {
+  if(blueToothNotif) {
+      blueToothNotif = false;
+      sendPacket();
+  }
 
-          int i = 0;
-
-          while ((i < N_COMPRESSION) && !(_ring_buffer_empty(&_rb[sampleQidx]))) { // so N_COMPRESSION should define how many uint32 slots we want to grab out of sampleQidx
-               // some pointer to compressionQ *p
-              ring_buffer_get(sampleQidx, &compressionTemp[curIdx*NUM_SAMPLES]); // compressionTemp is of type uint32_t[], so it should realign each individual sample
-              i++;
-
-              // right now, i aim to fill up compressionTemp fully. we fill with N_COMPRESSION * NUM_SAMPLES amount of individual samples.
-
-              curIdx++;
-
-          }
-          blueToothNotif = true;
-          curIdx = 0;
-
-          compress(COMPRESSION_RATIO, compressionTemp, N_COMPRESSION, NUM_LEVELS, NUM_CHANNELS);
-          // chat should it be &compressionTemp[0] or what?
-          sendPacket();
-
-      }
+//  if (ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) {
+//
+//          int i = 0;
+//
+//          while ((i < N_COMPRESSION) && !(_ring_buffer_empty(&_rb[sampleQidx]))) { // so N_COMPRESSION should define how many uint32 slots we want to grab out of sampleQidx
+//               // some pointer to compressionQ *p
+//              ring_buffer_get(sampleQidx, &compressionTemp[curIdx*NUM_SAMPLES]); // compressionTemp is of type uint32_t[], so it should realign each individual sample
+//              i++;
+//
+//              // right now, i aim to fill up compressionTemp fully. we fill with N_COMPRESSION * NUM_SAMPLES amount of individual samples.
+//
+//              curIdx++;
+//
+//          }
+//          blueToothNotif = true;
+//          curIdx = 0;
+//
+//          //compress(COMPRESSION_RATIO, compressionTemp, N_COMPRESSION, NUM_LEVELS, NUM_CHANNELS);
+//          // chat should it be &compressionTemp[0] or what?
+//          sendPacket();
+//
+//      }
 }
 
 /**************************************************************************//**
@@ -516,15 +532,16 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
     // This event indicates that a new connection was opened.
     case sl_bt_evt_connection_opened_id:
       //printf("Device connected!\n"); // start sampling after connection...need timestamps and packet IDs
-      //LETIMER_CounterSet(LETIMER0, LETIMER_CompareGet(LETIMER0, 0));  // Reset to top
-      //LETIMER_Enable(LETIMER0, true);
+      LETIMER_CounterSet(LETIMER0, LETIMER_CompareGet(LETIMER0, 0));  // Reset to top
+      LETIMER_Enable(LETIMER0, true);
       break;
 
     // -------------------------------
     // This event indicates that a connection was closed.
     case sl_bt_evt_connection_closed_id:
       // Generate data for advertising
-      //LETIMER_Enable(LETIMER0, false);
+      LETIMER_Enable(LETIMER0, false);
+
       sc = sl_bt_legacy_advertiser_generate_data(advertising_set_handle,
                                                  sl_bt_advertiser_general_discoverable); // stop sampling after connection
       app_assert_status(sc);
