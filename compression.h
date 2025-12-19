@@ -1,17 +1,21 @@
 #ifndef COMPRESSION_H
 #define COMPRESSION_H
 
-#include "wave_library.h"
+#include "compression_types.h"
+#include "wavedec.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void wavedec_compress(*BluetoothPacket src, *CompressedPacket dst) {
+void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, SAMPLE_TYPE* data,
+              int signal_length, int num_levels, int num_channels, CodewordEntry* codeword_entries, int* num_codewords, COEFFICIENT_TYPE* final_quant);
+
+
 
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* WAVELIB_H */
+#endif /* COMPRESSION_H */

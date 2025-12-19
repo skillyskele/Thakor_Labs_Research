@@ -45,6 +45,8 @@
 #include "sl_status.h"
 #include "common_config.h"
 #include "ring_buffer.h"
+#include "compression.h"
+#include "dwt.h"
 #include <stdio.h>
 
 // Set CLK_ADC to 10MHz
@@ -105,6 +107,17 @@ static COMPRESSION_TYPE compressionTemp[COMPRESSED_BUFFER_SIZE];
 static uint8_t curIdx;
 
 static uint8_t samples_lost = 0;
+
+
+wave_object_t wave_pool[MAX_WAVE_OBJECTS];
+int wave_pool_used[MAX_WAVE_OBJECTS] = {0}; // Track usage
+
+
+wt_object_t wt_pool[MAX_WT_OBJECTS];
+int wt_pool_used[MAX_WT_OBJECTS] = {0}; // Track usage
+
+wave_object wave;
+wt_object wave_transform;
 
 /**************************************************************************//**
  * @brief  GPIO Initializer
@@ -397,18 +410,8 @@ void app_init(void)
     };
     sampleQidx = 0;
     ring_buffer_init(&_rbd, &attr1); // make sampleQueue
-//
-//    sampleCount = 0;
 
-//    rb_attr_t attr2 = {
-//        .s_elem = sizeof(COMPRESSION_TYPE),
-//        .n_elem = COMPRESSED_Q_SIZE,
-//        .buffer = compressedQueue,
-//    };
-    //compressedQidx = 1;
-    //ring_buffer_init(&_rbd, &attr1);
 
-    //curIdx = 0;
 
 
 
@@ -434,38 +437,47 @@ typedef struct __attribute__((packed)) {
 #define PACKET_HEADER_SIZE sizeof(PacketHeader)
 #define MAX_SAMPLES_PER_PAYLOAD ((gattdb_iadc_result_len - PACKET_HEADER_SIZE) / BUFFER_MEMBER_SIZE) // 187 / 2 = 93...it'll send a max of 93 at a time.
 
-sl_status_t sendPacket() {
+sl_status_t sendPacket(CodewordEntry* codeword_results, int* num_nnz, COEFFICIENT_TYPE* quant) {
   sl_status_t sc = SL_STATUS_OK;
   // find the number of samples that can fit
-  size_t bufferIdx = 0;
-  uint16_t local_packet_id = 0; // local ID for the current compressed chunk, its type must match max # elements in compressionTemp
+//  size_t bufferIdx = 0;
+//  uint16_t local_packet_id = 0; // local ID for the current compressed chunk, its type must match max # elements in compressionTemp
+//
+//
+//
+//  while (bufferIdx < COMPRESSED_BUFFER_SIZE){ // 240 is the max.
+//    size_t samples_that_can_fit = COMPRESSED_BUFFER_SIZE - bufferIdx;
+//    size_t samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
+//
+//
+//    PacketHeader header;
+//    header.packet_id = local_packet_id++;
+//    header.flags = 0;
+//    if (bufferIdx == 0) header.flags |= 0x01; // start
+//    if ((bufferIdx + samples_used) >= COMPRESSED_BUFFER_SIZE) header.flags |= 0x02; // end
+//
+//
+//    uint8_t packet[sizeof(PacketHeader) + samples_used * BUFFER_MEMBER_SIZE]; // 186 = 93*2.....but 187 is not. similarly, 108 = 54 * 2, but 109 is not.
+//    memcpy(packet, &header, sizeof(PacketHeader)); // but the size of the packet was...190. the size of the packet was then changed to be 112. though it shoulve been 189 and 111.
+//    memcpy(packet + sizeof(PacketHeader), &compressionTemp[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
+//
+//    sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
+//    if (sc != SL_STATUS_OK) {
+//        break;
+//    }
+//
+//
+//    bufferIdx += samples_used;
+//  }
+
+  uint8_t packet[sizeof(int) + sizeof(COEFFICIENT_TYPE) + sizeof(CodewordEntry)];
+  memcpy(packet, num_nnz, sizeof(int));
+  memcpy(packet + sizeof(int), quant, sizeof(COEFFICIENT_TYPE));
+  memcpy(packet + sizeof(int) + sizeof(COEFFICIENT_TYPE), codeword_results, sizeof(CodewordEntry));
+
+  sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
 
 
-
-  while (bufferIdx < COMPRESSED_BUFFER_SIZE){ // 240 is the max.
-    size_t samples_that_can_fit = COMPRESSED_BUFFER_SIZE - bufferIdx;
-    size_t samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
-
-
-    PacketHeader header;
-    header.packet_id = local_packet_id++;
-    header.flags = 0;
-    if (bufferIdx == 0) header.flags |= 0x01; // start
-    if ((bufferIdx + samples_used) >= COMPRESSED_BUFFER_SIZE) header.flags |= 0x02; // end
-
-
-    uint8_t packet[sizeof(PacketHeader) + samples_used * BUFFER_MEMBER_SIZE]; // 186 = 93*2.....but 187 is not. similarly, 108 = 54 * 2, but 109 is not.
-    memcpy(packet, &header, sizeof(PacketHeader)); // but the size of the packet was...190. the size of the packet was then changed to be 112. though it shoulve been 189 and 111.
-    memcpy(packet + sizeof(PacketHeader), &compressionTemp[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
-
-    sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
-    if (sc != SL_STATUS_OK) {
-        break;
-    }
-
-
-    bufferIdx += samples_used;
-  }
   return sc;
 }
 
@@ -498,9 +510,17 @@ void app_process_action(void)
           //blueToothNotif = true;
           curIdx = 0;
 
+          COEFFICIENT_TYPE quant;
+          int num_nnz;
+          CodewordEntry codeword_results[MAX_CODEWORDS];
+
+
           //compress(COMPRESSION_RATIO, compressionTemp, N_COMPRESSION, NUM_LEVELS, NUM_CHANNELS);
+          compress(wave, wave_transform, COMPRESSION_RATIO, compressionTemp, COMPRESSION_THRESHOLD, NUM_LEVELS,
+                   NUM_CHANNELS, codeword_results, &num_nnz, &quant);
+
           // chat should it be &compressionTemp[0] or what?
-          sendPacket();
+          sendPacket(codeword_results, &num_nnz, &quant); // might have to take in a NUM_CHANNELS parameter in the future but not for now!
 
       }
 }
@@ -547,6 +567,8 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
     // This event indicates that a new connection was opened.
     case sl_bt_evt_connection_opened_id:
       //printf("Device connected!\n"); // start sampling after connection...need timestamps and packet IDs
+      wave = wave_init("db4");
+      wave_transform = wt_init(wave, "dwt", N_COMPRESSION, NUM_LEVELS);
       LETIMER_CounterSet(LETIMER0, LETIMER_CompareGet(LETIMER0, 0));  // Reset to top
       LETIMER_Enable(LETIMER0, true);
       break;
@@ -556,6 +578,8 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
     case sl_bt_evt_connection_closed_id:
       // Generate data for advertising
       LETIMER_Enable(LETIMER0, false);
+      wave_free(wave);
+      wt_free(wave_transform);
 
       sc = sl_bt_legacy_advertiser_generate_data(advertising_set_handle,
                                                  sl_bt_advertiser_general_discoverable); // stop sampling after connection
