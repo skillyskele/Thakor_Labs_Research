@@ -8,7 +8,7 @@
 
     <!--Bionode 2.0-->
     <characteristic const="false" id="device_name" name="Bionode 2.0" sourceId="org.bluetooth.characteristic.gap.device_name" uuid="2A00">
-      <value length="13" type="utf-8" variable_length="false">BionodeWavelet</value>
+      <value length="0" type="utf-8" variable_length="true">BionodeW</value>
       <properties>
         <read authenticated="false" bonded="false" encrypted="false"/>
         <write authenticated="false" bonded="false" encrypted="false"/>
@@ -80,7 +80,7 @@
 
     <!--Compressed Biosignal Data-->
     <characteristic const="false" id="iadc_result" name="Compressed Biosignal Data" sourceId="" uuid="91fd3072-5f44-4038-85d7-b807e11b5121">
-      <value length="40" type="hex" variable_length="false">00</value>
+      <value length="190" type="hex" variable_length="false">00</value>
       <properties>
         <read authenticated="false" bonded="false" encrypted="false"/>
         <notify authenticated="false" bonded="false" encrypted="false"/>

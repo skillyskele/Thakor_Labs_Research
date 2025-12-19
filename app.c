@@ -64,7 +64,7 @@
 #define LDMA_OUTPUT_0_PIN         2
 
 // Desired LETIMER frequency in Hz
-#define LETIMER_FREQ              1000
+#define LETIMER_FREQ              5000
 
 // LETIMER GPIO toggle port/pin (toggled in EM2; requires port A/B GPIO)
 #define LETIMER_OUTPUT_0_PORT     gpioPortA
@@ -327,6 +327,8 @@ void initLDMA(uint32_t *buffer, uint32_t size)
 
 volatile bool blueToothNotif = false;
 
+//volatile uint32_t irq_times[1000];
+//volatile uint32_t irq_idx = 0;
 
 /**************************************************************************//**
  * @brief  LDMA Handler
@@ -335,21 +337,24 @@ void LDMA_IRQHandler(void)
 {
 
     LDMA_IntClear(LDMA_IF_DONE0);
-//    SAMPLE_TYPE iadcResults[NUM_SAMPLES];
-//
-//    for (uint32_t i = 0; i < NUM_SAMPLES; i++)
-//        iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
-//    int err = ring_buffer_put(sampleQidx, iadcResults); // put sizeof(iadcResults) bytes into sampleQueue[head]
-//
-//    if (err) {
-//      samples_lost++;
-//    }
+//    uint32_t now = LETIMER_CounterGet(LETIMER0);
+//    if (irq_idx < 1000) irq_times[irq_idx++] = now;
 
-    sampleCount++;
-    if (sampleCount == NUM_SAMPLES) {
-        blueToothNotif = true;
-        sampleCount = 0;
+    SAMPLE_TYPE iadcResults[NUM_SAMPLES];
+
+    for (uint32_t i = 0; i < NUM_SAMPLES; i++)
+        iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
+    int err = ring_buffer_put(sampleQidx, iadcResults); // put sizeof(iadcResults) bytes into sampleQueue[head]
+
+    if (err) {
+      samples_lost++;
     }
+
+//    sampleCount++;
+//    if (sampleCount == NUM_SAMPLES) {
+//        sampleCount = 0;
+//    }
+//    blueToothNotif = true;
 
 
   // Toggle LED0 to notify that transfers are complete
@@ -385,13 +390,13 @@ void app_init(void)
     initLetimer();
 
     // Initialize the buffers.
-//    rb_attr_t attr1 = {
-//        .s_elem = NUM_SAMPLES * sizeof(SAMPLE_TYPE), // i want to make one slot of sampleQueue, NUMSAMPLES amount of SAMPLETYPE, or 60 uint32_t.
-//        .n_elem = SAMPLE_Q_SIZE,
-//        .buffer = sampleQueue,
-//    };
-//    sampleQidx = 0;
-//    ring_buffer_init(&_rbd, &attr1); // make sampleQueue
+    rb_attr_t attr1 = {
+        .s_elem = NUM_SAMPLES * sizeof(SAMPLE_TYPE), // i want to make one slot of sampleQueue, NUMSAMPLES amount of SAMPLETYPE, or 60 uint32_t.
+        .n_elem = SAMPLE_Q_SIZE,
+        .buffer = sampleQueue,
+    };
+    sampleQidx = 0;
+    ring_buffer_init(&_rbd, &attr1); // make sampleQueue
 //
 //    sampleCount = 0;
 
@@ -418,39 +423,49 @@ void app_init(void)
 }
 
 
+typedef struct __attribute__((packed)) {
+    uint16_t packet_id;
+    uint8_t flags;
+} PacketHeader;
+
 // we get 244 bytes per bluetooth packet
-static uint32_t packet_id = 0;  // Global packet counter
-#define MAX_SAMPLES_PER_PAYLOAD 16 // Max number of samples per BLE packet
-#define PACKET_ID_SIZE sizeof(uint16_t) //34 bytes 16 * uint16_t, 1 uint16_t
+// #define PACKET_ID_SIZE sizeof(uint16_t) //34 bytes 16 * uint16_t, 1 uint16_t
 #define BUFFER_MEMBER_SIZE sizeof(COMPRESSION_TYPE)
+#define PACKET_HEADER_SIZE sizeof(PacketHeader)
+#define MAX_SAMPLES_PER_PAYLOAD ((gattdb_iadc_result_len - PACKET_HEADER_SIZE) / BUFFER_MEMBER_SIZE) // 187 / 2 = 93...it'll send a max of 93 at a time.
 
 sl_status_t sendPacket() {
   sl_status_t sc = SL_STATUS_OK;
   // find the number of samples that can fit
-//  size_t bufferIdx = 0;
-//  size_t samples_that_can_fit = 0; // type should match max # elements compressionTemp can hold, look at COMPRESSED_BUFFER_SIZE
-//  size_t samples_used = 0;
-//  while (bufferIdx < COMPRESSED_BUFFER_SIZE){ // since we're just, emptying out the whole thing
-//    samples_that_can_fit = COMPRESSED_BUFFER_SIZE - bufferIdx;
-//    samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
-//
-//    // prepare packet: id, payload
-//    uint8_t packet[PACKET_ID_SIZE + samples_used * BUFFER_MEMBER_SIZE];
-//    memcpy(packet, &packet_id, PACKET_ID_SIZE);
-//    memcpy(packet + PACKET_ID_SIZE, &compressionTemp[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
-//    sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, PACKET_ID_SIZE + samples_used * BUFFER_MEMBER_SIZE, packet);
-//    if (sc != SL_STATUS_OK) {
-//        break;
-//    }
-//
-//
-//    bufferIdx += samples_used;
-//    packet_id += 1;
-//  }
-  uint8_t packet[gattdb_iadc_result_len] = {sampleCount};
-  sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, gattdb_iadc_result_len, packet);
+  size_t bufferIdx = 0;
+  uint16_t local_packet_id = 0; // local ID for the current compressed chunk, its type must match max # elements in compressionTemp
 
 
+
+  while (bufferIdx < COMPRESSED_BUFFER_SIZE){ // 240 is the max.
+    size_t samples_that_can_fit = COMPRESSED_BUFFER_SIZE - bufferIdx;
+    size_t samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
+
+
+    PacketHeader header;
+    header.packet_id = local_packet_id++;
+    header.flags = 0;
+    if (bufferIdx == 0) header.flags |= 0x01; // start
+    if ((bufferIdx + samples_used) >= COMPRESSED_BUFFER_SIZE) header.flags |= 0x02; // end
+
+
+    uint8_t packet[sizeof(PacketHeader) + samples_used * BUFFER_MEMBER_SIZE]; // 186 = 93*2.....but 187 is not. similarly, 108 = 54 * 2, but 109 is not.
+    memcpy(packet, &header, sizeof(PacketHeader)); // but the size of the packet was...190. the size of the packet was then changed to be 112. though it shoulve been 189 and 111.
+    memcpy(packet + sizeof(PacketHeader), &compressionTemp[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
+
+    sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
+    if (sc != SL_STATUS_OK) {
+        break;
+    }
+
+
+    bufferIdx += samples_used;
+  }
   return sc;
 }
 
@@ -461,33 +476,33 @@ void app_process_action(void)
 
   }
 
-  if(blueToothNotif) {
-      blueToothNotif = false;
-      sendPacket();
-  }
+//  if(blueToothNotif) {
+//      blueToothNotif = false;
+//      sendPacket();
+//  }
 
-//  if (ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) {
-//
-//          int i = 0;
-//
-//          while ((i < N_COMPRESSION) && !(_ring_buffer_empty(&_rb[sampleQidx]))) { // so N_COMPRESSION should define how many uint32 slots we want to grab out of sampleQidx
-//               // some pointer to compressionQ *p
-//              ring_buffer_get(sampleQidx, &compressionTemp[curIdx*NUM_SAMPLES]); // compressionTemp is of type uint32_t[], so it should realign each individual sample
-//              i++;
-//
-//              // right now, i aim to fill up compressionTemp fully. we fill with N_COMPRESSION * NUM_SAMPLES amount of individual samples.
-//
-//              curIdx++;
-//
-//          }
-//          blueToothNotif = true;
-//          curIdx = 0;
-//
-//          //compress(COMPRESSION_RATIO, compressionTemp, N_COMPRESSION, NUM_LEVELS, NUM_CHANNELS);
-//          // chat should it be &compressionTemp[0] or what?
-//          sendPacket();
-//
-//      }
+  if (ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) {
+
+          int i = 0;
+
+          while ((i < COMPRESSION_THRESHOLD) && !(_ring_buffer_empty(&_rb[sampleQidx]))) { // so N_COMPRESSION should define how many uint32 slots we want to grab out of sampleQidx
+               // some pointer to compressionQ *p
+              ring_buffer_get(sampleQidx, &compressionTemp[curIdx*NUM_SAMPLES]); // compressionTemp is of type uint32_t[], so it should realign each individual sample
+              i++;
+
+              // right now, i aim to fill up compressionTemp fully. we fill with N_COMPRESSION * NUM_SAMPLES amount of individual samples.
+
+              curIdx++;
+
+          }
+          //blueToothNotif = true;
+          curIdx = 0;
+
+          //compress(COMPRESSION_RATIO, compressionTemp, N_COMPRESSION, NUM_LEVELS, NUM_CHANNELS);
+          // chat should it be &compressionTemp[0] or what?
+          sendPacket();
+
+      }
 }
 
 /**************************************************************************//**
