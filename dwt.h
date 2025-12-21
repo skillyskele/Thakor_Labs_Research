@@ -13,7 +13,7 @@ extern "C" {
 void dwt_sym_stride(COEFFICIENT_TYPE *inp, int N, COEFFICIENT_TYPE *lpd,  COEFFICIENT_TYPE *hpd, int lpd_len,
                            COEFFICIENT_TYPE *cA, int len_cA,  COEFFICIENT_TYPE *cD, int istride, int ostride);
 
-void dwt(wt_object wt, const SAMPLE_TYPE *input);
+void dwt(wt_object wt, const COMPRESSION_TYPE *input);
 
 #ifdef __cplusplus
 }

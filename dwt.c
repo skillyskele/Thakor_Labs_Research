@@ -58,7 +58,7 @@ void dwt_sym_stride(COEFFICIENT_TYPE *inp, int N, COEFFICIENT_TYPE *lpd, COEFFIC
 }
 
 
-void dwt(wt_object wt, const SAMPLE_TYPE *input) {
+void dwt(wt_object wt, const COMPRESSION_TYPE *input) {
     int J = wt->J;
     int temp_len = wt->siglength;
     int i; // will be reused many times

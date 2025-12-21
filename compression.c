@@ -25,7 +25,8 @@ int wt_pool_used[MAX_WT_OBJECTS] = {0}; // Track usage
 
 */
 
-void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, SAMPLE_TYPE* data, int signal_length, int num_levels, int num_channels, CodewordEntry* codeword_entries, int* num_codewords, COEFFICIENT_TYPE* final_quant)
+void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, COMPRESSION_TYPE* data, int signal_length, int num_levels, int num_channels,
+              CodewordEntry* codeword_entries, int* num_codewords, COEFFICIENT_TYPE* final_quant, int *compressed_signal_length)
 {
 
 
@@ -36,13 +37,13 @@ void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, S
 
     // grab mean of each channel of the data
     // save the means used to demean the data later
-    SAMPLE_TYPE means[num_channels];
+    COMPRESSION_TYPE means[num_channels];
     for (int i = 0; i < num_channels; i++) {
-        SAMPLE_TYPE sum = 0;
+        COMPRESSION_TYPE sum = 0;
         for (int j = 0; j < signal_length; j++) {
             sum += data[i*signal_length + j];
         }
-        SAMPLE_TYPE mean = sum / signal_length;
+        COMPRESSION_TYPE mean = sum / signal_length;
         means[i] = mean;
         // demean the data
         for (int j = 0; j < signal_length; j++) {
@@ -170,6 +171,8 @@ void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, S
                 }
             }
             *final_quant = quant;
+
+            *compressed_signal_length = output_length;
         }
 
 

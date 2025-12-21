@@ -12,13 +12,14 @@
 
 
 typedef float COEFFICIENT_TYPE;
-typedef uint16_t SAMPLE_TYPE; // will actually be uint16 with the iadc, but for testing, it's easier to have it float
+typedef float COMPRESSION_TYPE;
 
 
-typedef struct
+
+typedef struct // it's padded to be 8 bytes!!!
 {
     int16_t idx;
-    int32_t codeword;
+    int16_t codeword;
 } CodewordEntry;
 
 
