@@ -61,7 +61,7 @@ int ring_buffer_get(rbd_t rbd, void *data)
 
     if ((rbd < RING_BUFFER_MAX) && (_ring_buffer_empty(&_rb[rbd]) == 0)) {
         const size_t offset = (_rb[rbd].tail & (_rb[rbd].n_elem - 1)) * _rb[rbd].s_elem;
-        memcpy(data, &(_rb[rbd].buf[offset]), _rb[rbd].s_elem); // can ask it to grab as many as you want...
+        memcpy(data, &(_rb[rbd].buf[offset]), _rb[rbd].s_elem); // can ask it to grab as many bytes as you want by changing s_elem
         _rb[rbd].tail++;
     } else {
         err = -1;

@@ -97,24 +97,22 @@ uint32_t scanBuffer[NUM_SAMPLES];
 
 static rbd_t _rbd = 0;
 static rbd_t sampleQidx = 0;
-static SampleSlotType sampleQueue[SAMPLE_Q_SIZE]; // just a continuous array of uint32_t
-static uint8_t sampleCount = 0;
+static SampleSlotType sampleQueue[SAMPLE_Q_SIZE];
 
 //static rbd_t compressedQidx;
 static bool compress_trigger;
-//static COMPRESSION_TYPE compressedQueue[COMPRESSED_Q_SIZE];
-static COMPRESSION_TYPE compressionTemp[COMPRESSED_BUFFER_SIZE];
+static COMPRESSION_TYPE compressionTemp[COMPRESS_AT_A_TIME];
 static uint8_t curIdx;
 
 static uint8_t samples_lost = 0;
 
 
 wave_object_t wave_pool[MAX_WAVE_OBJECTS];
-int wave_pool_used[MAX_WAVE_OBJECTS] = {0}; // Track usage
+int wave_pool_used[MAX_WAVE_OBJECTS] = {0};
 
 
 wt_object_t wt_pool[MAX_WT_OBJECTS];
-int wt_pool_used[MAX_WT_OBJECTS] = {0}; // Track usage
+int wt_pool_used[MAX_WT_OBJECTS] = {0};
 
 wave_object wave;
 wt_object wave_transform;
@@ -377,13 +375,14 @@ void LDMA_IRQHandler(void)
 
     for (uint32_t i = 0; i < NUM_SAMPLES; i++) {
         //iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
-        iadcResults[i] = test_signal[test_idx]; // TEST INPUT
-        test_idx = (test_idx + 1) % 160;
+
+        iadcResults[i] = test_signal[test_idx]; // COMMENT THIS OUT
+        test_idx = (test_idx + 1) % 160;        // AND UNCOMMENT SCANBUFFER CODE FOR NORMAL OPERATION
     }
-    int err = ring_buffer_put(sampleQidx, iadcResults); // put sizeof(iadcResults) bytes into sampleQueue[head]
+    int err = ring_buffer_put(sampleQidx, iadcResults); // throw it into the sample queue!
 
     if (err) {
-      samples_lost++;
+      samples_lost++; // count if we lose any samples due to buffer being full
     }
 
   // Toggle LED0 to notify that transfers are complete
@@ -441,47 +440,63 @@ void app_init(void)
 
 }
 
+/**** BLUETOOTH PROTOCOL CODE ****/
+
 typedef struct __attribute__((packed)) {
     COEFFICIENT_TYPE quant;
-    int original_signal_length;
+    int original_signal_length; // it's possible to use something smaller than int to store the original signal length.
+                                // What is the original signal length? It's the wave_transform->outlength, which represents the length of the sparse representation coefficients, whose calculation can be found in wavedec.c
+                                // Is type must be large enough to represent the max output length. For example, for a signal chunk of 6000, we expect
 } StartHeader;
 
 typedef struct __attribute__((packed)) {
-    uint16_t packet_id;
+    uint8_t packet_id;
     uint8_t flags;
 } PacketHeader;
 
-// we get 244 bytes per bluetooth packet
-// #define PACKET_ID_SIZE sizeof(uint16_t) //34 bytes 16 * uint16_t, 1 uint16_t
-#define BUFFER_MEMBER_SIZE sizeof(CodewordEntry) // it's 6 bytes
+#define BUFFER_MEMBER_SIZE sizeof(CodewordEntry) // it's 8 bytes
 #define PACKET_HEADER_SIZE sizeof(PacketHeader) // 3 bytes
 #define MAX_SAMPLES_PER_PAYLOAD ((gattdb_iadc_result_len - 1 - PACKET_HEADER_SIZE) / BUFFER_MEMBER_SIZE) // should be 31
 
 #define PACKET_TYPE_START 0x01
 #define PACKET_TYPE_DATA  0x02
 
+/**
+ * The purpose of the sendPacket() function is to greedily send as much data per packet
+ * until all the compressed values have been relayed
+ */
 
 sl_status_t sendPacket(CodewordEntry* codeword_results, int* num_nnz, COEFFICIENT_TYPE* quant, int* compressed_signal_length) {
   sl_status_t sc = SL_STATUS_OK;
+
   // find the number of samples that can fit
   int bufferIdx = 0;
-  uint16_t local_packet_id = 0; // local ID for the current compressed chunk, its type must match max # elements in compressionTemp
+  uint16_t local_packet_id = 0; // local ID for the current compressed chunk, its type must be able to contain max # elements in compressionTemp
 
   // Send the StartHeader once at the very start
+
+  // fill up the start_header
   StartHeader start_header;
   start_header.quant = *quant;
-  start_header.original_signal_length = *compressed_signal_length; // we're compressing COMPRESSED_BUFFER_SIZE at a time and sending it off
+  start_header.original_signal_length = *compressed_signal_length; // we're compressing COMPRESS_AT_A_TIME at a time and sending it off
 
+  // create the start_packet and ZERO IT OUT
   uint8_t start_packet[1 + sizeof(StartHeader)];
-  start_packet[0] = PACKET_TYPE_START;
+  memset(start_packet, 0, sizeof(start_packet));
+
+  start_packet[0] = PACKET_TYPE_START; // first byte always tells what type of packet it is
+
   memcpy(start_packet + 1, &start_header, sizeof(StartHeader));
+
+  // send it off
   sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(start_packet), start_packet);
+
   if (sc != SL_STATUS_OK) {
       return sc;
   }
 
 
-
+  // while we haven't sent every nonzero value yet, keep going
   while (bufferIdx < *num_nnz){ // 11 is the max.
     int samples_that_can_fit = *num_nnz - bufferIdx;
     int samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
@@ -493,8 +508,10 @@ sl_status_t sendPacket(CodewordEntry* codeword_results, int* num_nnz, COEFFICIEN
     if (bufferIdx == 0) header.flags |= 0x01; // start
     if ((bufferIdx + samples_used) >= *num_nnz) header.flags |= 0x02; // end
 
-
+    // make data packet and ZERO IT OUT
     uint8_t packet[1 + sizeof(PacketHeader) + samples_used * BUFFER_MEMBER_SIZE];
+    memset(packet, 0, sizeof(packet));
+
     packet[0] = PACKET_TYPE_DATA;
 
     memcpy(packet + 1, &header, sizeof(PacketHeader));
@@ -510,14 +527,6 @@ sl_status_t sendPacket(CodewordEntry* codeword_results, int* num_nnz, COEFFICIEN
 
     bufferIdx += samples_used;
   }
-
-  uint8_t packet[sizeof(int) + sizeof(COEFFICIENT_TYPE) + sizeof(CodewordEntry)];
-  memcpy(packet, num_nnz, sizeof(int));
-  memcpy(packet + sizeof(int), quant, sizeof(COEFFICIENT_TYPE));
-  memcpy(packet + sizeof(int) + sizeof(COEFFICIENT_TYPE), codeword_results, sizeof(CodewordEntry));
-
-  sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
-
 
   return sc;
 }
@@ -538,9 +547,9 @@ void app_process_action(void)
 
           int i = 0;
 
-          while ((i < COMPRESSION_THRESHOLD) && !(_ring_buffer_empty(&_rb[sampleQidx]))) { // so N_COMPRESSION should define how many uint32 slots we want to grab out of sampleQidx
+          while ((i < COMPRESSION_THRESHOLD) && !(_ring_buffer_empty(&_rb[sampleQidx]))) {
               SampleSlotType sampleQElem;
-              ring_buffer_get(sampleQidx, &sampleQElem); // compressionTemp is of type uint32_t[], so it should realign each individual sample
+              ring_buffer_get(sampleQidx, &sampleQElem);
 
               for (int j = 0; j < NUM_SAMPLES; j++) {
                   compressionTemp[curIdx*NUM_SAMPLES + j] = (COMPRESSION_TYPE) sampleQElem.samples[j];
@@ -560,7 +569,7 @@ void app_process_action(void)
           int compressed_signal_length;
 
 
-          compress(wave, wave_transform, COMPRESSION_RATIO, compressionTemp, COMPRESSED_BUFFER_SIZE, NUM_LEVELS,
+          compress(wave, wave_transform, COMPRESSION_RATIO, compressionTemp, COMPRESS_AT_A_TIME, NUM_LEVELS,
                    NUM_CHANNELS, codeword_results, &num_nnz, &quant, &compressed_signal_length);
 
           // chat should it be &compressionTemp[0] or what?
@@ -612,7 +621,7 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
     case sl_bt_evt_connection_opened_id:
       //printf("Device connected!\n"); // start sampling after connection...need timestamps and packet IDs
       wave = wave_init("db4");
-      wave_transform = wt_init(wave, "dwt", COMPRESSED_BUFFER_SIZE, NUM_LEVELS);
+      wave_transform = wt_init(wave, "dwt", COMPRESS_AT_A_TIME, NUM_LEVELS);
       LETIMER_CounterSet(LETIMER0, LETIMER_CompareGet(LETIMER0, 0));  // Reset to top
       LETIMER_Enable(LETIMER0, true);
       break;

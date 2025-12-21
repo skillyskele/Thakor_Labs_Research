@@ -16,8 +16,7 @@ typedef float COMPRESSION_TYPE;
 
 
 
-typedef struct // it's padded to be 8 bytes!!!
-{
+typedef struct {
     int16_t idx;
     int16_t codeword;
 } CodewordEntry;

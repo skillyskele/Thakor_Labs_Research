@@ -5,8 +5,8 @@
 #include <stdint.h>
 
 typedef struct {
-    size_t s_elem; // configurable. 60 x uint32 or 60 x uint16 size packets
-    size_t n_elem; // configurable. 16 packet queue?
+    size_t s_elem;
+    size_t n_elem;
     void *buffer; // points to static sampleQueue[QUEUE_SIZE] in code
 } rb_attr_t;
 

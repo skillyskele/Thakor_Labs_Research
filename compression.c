@@ -93,6 +93,7 @@ void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, C
 
 
     quant = mx;
+    COEFFICIENT_TYPE last_best_quant = quant;
 
 
     //COEFFICIENT_TYPE original_energy = compute_energy(sparse_rep, num_channels, output_length);
@@ -145,6 +146,8 @@ void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, C
         num_nnz_bits = num_nnz * ceil(log2(q_max) + 1); // bits needed to represent each non zero coefficient
         bpp = (COEFFICIENT_TYPE) num_nnz_bits / (num_channels * output_length);
 
+        last_best_quant = quant;
+
         if (bpp > cr) {
             mn = quant;
             quant = (quant + mx) / 2.0;
@@ -170,7 +173,7 @@ void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, C
                     }
                 }
             }
-            *final_quant = quant;
+            *final_quant = last_best_quant;
 
             *compressed_signal_length = output_length;
         }
