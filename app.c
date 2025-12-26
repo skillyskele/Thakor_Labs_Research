@@ -444,10 +444,12 @@ void app_init(void)
 
 typedef struct __attribute__((packed)) {
     COEFFICIENT_TYPE quant;
-    int original_signal_length; // it's possible to use something smaller than int to store the original signal length.
+    // int original_signal_length; // it's possible to use something smaller than int to store the original signal length.
                                 // What is the original signal length? It's the wave_transform->outlength, which represents the length of the sparse representation coefficients, whose calculation can be found in wavedec.c
                                 // Is type must be large enough to represent the max output length. For example, for a signal chunk of 6000, we expect
-} StartHeader;
+    uint8_t num_levels;
+    int book_keeping[NUM_LEVELS]; // it's better to send the book keeping vector for python to reconstruct with!
+} StartHeader; // size is NUM_LEVELS amount of int + one float.
 
 typedef struct __attribute__((packed)) {
     uint8_t packet_id;
@@ -466,7 +468,7 @@ typedef struct __attribute__((packed)) {
  * until all the compressed values have been relayed
  */
 
-sl_status_t sendPacket(CodewordEntry* codeword_results, int* num_nnz, COEFFICIENT_TYPE* quant, int* compressed_signal_length) {
+sl_status_t sendPacket(CodewordEntry* codeword_results, int* num_nnz, COEFFICIENT_TYPE* quant, int* compressed_signal_length, int* book_keeping) {
   sl_status_t sc = SL_STATUS_OK;
 
   // find the number of samples that can fit
@@ -478,7 +480,10 @@ sl_status_t sendPacket(CodewordEntry* codeword_results, int* num_nnz, COEFFICIEN
   // fill up the start_header
   StartHeader start_header;
   start_header.quant = *quant;
-  start_header.original_signal_length = *compressed_signal_length; // we're compressing COMPRESS_AT_A_TIME at a time and sending it off
+  start_header.num_levels = NUM_LEVELS;
+  for (int i = 0; i < NUM_LEVELS; i++) {
+      start_header.book_keeping[i] = book_keeping[i];
+  }
 
   // create the start_packet and ZERO IT OUT
   uint8_t start_packet[1 + sizeof(StartHeader)];
@@ -573,7 +578,7 @@ void app_process_action(void)
                    NUM_CHANNELS, codeword_results, &num_nnz, &quant, &compressed_signal_length);
 
           // chat should it be &compressionTemp[0] or what?
-          sendPacket(codeword_results, &num_nnz, &quant, &compressed_signal_length); // might have to take in a NUM_CHANNELS parameter in the future but not for now!
+          sendPacket(codeword_results, &num_nnz, &quant, &compressed_signal_length, wave_transform->length); // might have to take in a NUM_CHANNELS parameter in the future but not for now!
 
       }
 }
