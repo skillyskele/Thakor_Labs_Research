@@ -47,6 +47,7 @@
 #include "ring_buffer.h"
 #include "compression.h"
 #include "dwt.h"
+#include "test_signal_data.h"
 #include <stdio.h>
 
 // Set CLK_ADC to 10MHz
@@ -117,23 +118,8 @@ int wt_pool_used[MAX_WT_OBJECTS] = {0};
 wave_object wave;
 wt_object wave_transform;
 
-static SAMPLE_TYPE test_signal[160] = {
-    2243, 3007, 2949, 3061, 3075, 2934, 2969, 2826, 2710, 2617, 2594, 1121,
-    83, 4084, 4085, 4082, 4079, 4085, 4088, 4080, 4082, 4080, 4084, 4082,
-    4075, 130, 74, 251, 264, 580, 814, 1058, 1169, 1375, 1413, 1150,
-    1500, 1860, 1697, 1852, 2036, 1992, 2093, 2149, 2231, 2262, 2258, 2282,
-    2347, 2323, 2318, 2279, 2247, 2430, 2340, 2269, 2356, 2388, 2374, 2494,
-    2537, 2523, 2559, 2819, 2539, 2451, 2816, 2779, 2842, 2827, 2803, 2757,
-    2748, 2817, 2761, 2874, 2882, 2826, 2915, 3014, 2960, 2949, 2967, 2975,
-    2895, 2826, 2926, 2851, 2774, 2885, 2849, 2883, 2715, 2597, 2486, 2635,
-    2676, 2651, 2311, 2493, 2429, 2510, 2528, 2464, 2526, 2429, 2536, 2431,
-    2506, 2254, 2288, 2436, 2351, 2218, 2335, 2270, 2226, 2195, 2220, 2320,
-    2268, 2195, 2231, 2058, 2071, 2175, 2171, 2063, 2078, 1996, 2050, 2075,
-    2151, 2192, 2109, 2134, 2198, 2180, 2176, 2186, 2169, 2082, 1974, 1994,
-    1911, 1964, 1992, 2124, 2153, 2038, 2208, 2145, 2108, 2229, 2209, 2122,
-    2009, 2064, 2154, 2068
-};
-static int test_idx = 0;
+
+static int test_idx = 0; // used to index into test_signal which is defined in test_signal_data.c
 
 
 /**************************************************************************//**
@@ -377,7 +363,7 @@ void LDMA_IRQHandler(void)
         //iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
 
         iadcResults[i] = test_signal[test_idx]; // COMMENT THIS OUT
-        test_idx = (test_idx + 1) % 160;        // AND UNCOMMENT SCANBUFFER CODE FOR NORMAL OPERATION
+        test_idx = (test_idx + 1) % 1000;        // AND UNCOMMENT SCANBUFFER CODE FOR NORMAL OPERATION
     }
     int err = ring_buffer_put(sampleQidx, iadcResults); // throw it into the sample queue!
 
