@@ -45,6 +45,7 @@
 #include "sl_status.h"
 #include "common_config.h"
 #include "ring_buffer.h"
+#include "test_signal_data.h"
 #include <stdio.h>
 
 // Set CLK_ADC to 10MHz
@@ -99,20 +100,12 @@ static SampleSlotType sampleQueue[SAMPLE_Q_SIZE]; // just a continuous array of 
 static uint8_t sampleCount = 0;
 
 //static rbd_t compressedQidx;
-static bool compress_trigger;
+//static bool compress_trigger;
 //static COMPRESSION_TYPE compressedQueue[COMPRESSED_Q_SIZE];
 static COMPRESSION_TYPE compressionTemp[COMPRESSED_BUFFER_SIZE];
 static uint8_t curIdx;
 
 static uint8_t samples_lost = 0;
-
-enum {
-    CONSUMER_CHECK = 1,
-    CONSUMER_ENTRY = 2,
-    CONSUMER_EXIT  = 3,
-    ISR_ENTRY    = 4,
-    ISR_EXIT     = 5
-};
 
 static uint32_t core_freq;
 
@@ -133,8 +126,7 @@ static volatile int interrupt_time_idx = 0;
 //static volatile uint32_t last_application = 0;
 
 
-
-volatile uint32_t emu_status; // look at this while it's running
+static int test_idx = 0;
 
 
 
@@ -387,8 +379,14 @@ void LDMA_IRQHandler(void)
 
     SAMPLE_TYPE iadcResults[NUM_SAMPLES];
 
-    for (uint32_t i = 0; i < NUM_SAMPLES; i++)
-        iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
+    for (uint32_t i = 0; i < NUM_SAMPLES; i++) {
+        // iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
+        iadcResults[i] = test_signal[test_idx]; // COMMENT THIS OUT
+        test_idx = (test_idx + 1) % 1000;        // AND UNCOMMENT SCANBUFFER CODE FOR NORMAL OPERATION
+    }
+
+
+
     int err = ring_buffer_put(sampleQidx, iadcResults); // put sizeof(iadcResults) bytes into sampleQueue[head]
 
     if (err) {
@@ -412,6 +410,8 @@ void LDMA_IRQHandler(void)
    interrupt_times[interrupt_time_idx++] = ((float) (stop - start))/ ((float) core_freq);
    interrupt_time_idx %= 1000;
 }
+
+
 
 
 
