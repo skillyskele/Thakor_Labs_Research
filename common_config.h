@@ -5,18 +5,18 @@
 #include <stdint.h>
 
 // original ring buffer specs
-#define NUM_SAMPLES               10 // each DMA transfer is one packet's worth of samples. one packet has NUM_SAMPLES samples.
+#define NUM_SAMPLES               1 // each DMA transfer is one packet's worth of samples. one packet has NUM_SAMPLES samples.
 typedef uint16_t SAMPLE_TYPE;
-#define SAMPLE_Q_SIZE  16// how large is the original ring buffer?
+#define SAMPLE_Q_SIZE  128 // MUST be a power of 2!!!!!
 typedef struct {
     SAMPLE_TYPE samples[NUM_SAMPLES];
     // Add more fields if needed (e.g., timestamp, id)
 } SampleSlotType;
 
 // compression specs
-#define COMPRESSION_THRESHOLD 4
-#define N_COMPRESSION   4
+#define COMPRESSION_THRESHOLD 64
+#define N_COMPRESSION   64
 typedef uint16_t COMPRESSION_TYPE;
-#define COMPRESSED_BUFFER_SIZE 40 // must be N_COMPRESSION
+#define COMPRESSED_BUFFER_SIZE 64 // must be N_COMPRESSION
 
 #endif // COMMON_CONFIG_H_

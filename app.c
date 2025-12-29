@@ -60,8 +60,8 @@
 #define IADC_INPUT_1_BUSALLOC     GPIO_ABUSALLOC_AODD0_ADC0
 
 // LDMA transfer complete GPIO toggle port/pin
-#define LDMA_OUTPUT_0_PORT        gpioPortD
-#define LDMA_OUTPUT_0_PIN         2
+#define LDMA_OUTPUT_0_PORT        gpioPortB
+#define LDMA_OUTPUT_0_PIN         4
 
 // Desired LETIMER frequency in Hz
 #define LETIMER_FREQ              5000
@@ -74,8 +74,8 @@
 #define IADC_LDMA_CH              0
 #define PRS_CHANNEL               0
 
-// number of samples per buffer, and stuff like that, is all defined in common_config.h
-
+#define CONSUMER_OUTPUT_PORT      gpioPortA
+#define CONSUMER_OUTPUT_PIN       0
 
 /* This example enters EM2 in the infinite while loop; Setting this define to 1
  * enables debug connectivity in the EMU_CTRL register, which will consume about
@@ -106,6 +106,39 @@ static uint8_t curIdx;
 
 static uint8_t samples_lost = 0;
 
+enum {
+    CONSUMER_CHECK = 1,
+    CONSUMER_ENTRY = 2,
+    CONSUMER_EXIT  = 3,
+    ISR_ENTRY    = 4,
+    ISR_EXIT     = 5
+};
+
+static uint32_t core_freq;
+
+static volatile float consumer_times[1000]; // how long does the dequeueing and sending take?
+static volatile int consumer_time_idx = 0;
+
+static volatile float interrupt_times[1000]; // how long does the dequeueing and sending take?
+static volatile int interrupt_time_idx = 0;
+//
+//static volatile uint32_t interrupt_spacings[1000]; // how frequently does the interrupt occur?
+//static volatile int interrupt_spacing_idx = 0;
+//static volatile uint32_t last_irq = 0;
+//
+//
+//
+//static volatile uint32_t application_spacings[1000]; // how frequently does the app_process_action fire?
+//static volatile int application_spacing_idx = 0;
+//static volatile uint32_t last_application = 0;
+
+
+
+volatile uint32_t emu_status; // look at this while it's running
+
+
+
+
 /**************************************************************************//**
  * @brief  GPIO Initializer
  *****************************************************************************/
@@ -117,6 +150,7 @@ void initGPIO (void)
   // Configure LDMA/LETIMER as outputs
   GPIO_PinModeSet(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN, gpioModePushPull, 0);
   GPIO_PinModeSet(LETIMER_OUTPUT_0_PORT, LETIMER_OUTPUT_0_PIN, gpioModePushPull, 0);
+  GPIO_PinModeSet(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN, gpioModePushPull, 0);
 }
 
 /**************************************************************************//**
@@ -336,9 +370,20 @@ volatile bool blueToothNotif = false;
 void LDMA_IRQHandler(void)
 {
 
+    //ITM->PORT[1].u32=ISR_ENTRY;
+    GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
+
+
+//    uint32_t now_irq = LETIMER_CounterGet(LETIMER0);
+//    interrupt_spacings[interrupt_spacing_idx++] = (last_irq - now_irq) & 0xFFFF;
+//    last_irq = now_irq;
+//    interrupt_spacing_idx %= 1000;
+
+    uint32_t start = DWT->CYCCNT;
     LDMA_IntClear(LDMA_IF_DONE0);
 //    uint32_t now = LETIMER_CounterGet(LETIMER0);
 //    if (irq_idx < 1000) irq_times[irq_idx++] = now;
+    // emu_status = EMU->STATUS;
 
     SAMPLE_TYPE iadcResults[NUM_SAMPLES];
 
@@ -354,11 +399,18 @@ void LDMA_IRQHandler(void)
 //    if (sampleCount == NUM_SAMPLES) {
 //        sampleCount = 0;
 //    }
-//    blueToothNotif = true;
+//    blueToothNotif = true
+
+    GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
+
 
 
   // Toggle LED0 to notify that transfers are complete
-  GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
+    //ITM->PORT[1].u32=ISR_EXIT;
+    //printf(samples_lost);
+   uint32_t stop = DWT->CYCCNT;
+   interrupt_times[interrupt_time_idx++] = ((float) (stop - start))/ ((float) core_freq);
+   interrupt_time_idx %= 1000;
 }
 
 
@@ -410,6 +462,12 @@ void app_init(void)
 
     //curIdx = 0;
 
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+    core_freq = CMU_ClockFreqGet(cmuClock_HCLK);
+
+
 
 
 
@@ -423,8 +481,9 @@ void app_init(void)
 }
 
 
+
 typedef struct __attribute__((packed)) {
-    uint16_t packet_id;
+    uint8_t packet_id;
     uint8_t flags;
 } PacketHeader;
 
@@ -438,14 +497,13 @@ sl_status_t sendPacket() {
   sl_status_t sc = SL_STATUS_OK;
   // find the number of samples that can fit
   size_t bufferIdx = 0;
-  uint16_t local_packet_id = 0; // local ID for the current compressed chunk, its type must match max # elements in compressionTemp
+  uint8_t local_packet_id = 0; // local ID for the current compressed chunk, its type must match max # elements in compressionTemp
 
 
 
   while (bufferIdx < COMPRESSED_BUFFER_SIZE){ // 240 is the max.
     size_t samples_that_can_fit = COMPRESSED_BUFFER_SIZE - bufferIdx;
     size_t samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
-
 
     PacketHeader header;
     header.packet_id = local_packet_id++;
@@ -481,28 +539,49 @@ void app_process_action(void)
 //      sendPacket();
 //  }
 
+  //ITM->PORT[2].u32=CONSUMER_CHECK;
+  //uint32_t now_application = LETIMER_CounterGet(LETIMER0);
+  //application_spacings[application_spacing_idx++] = (last_application - now_application) & 0xFFFF;
+  //last_application = now_application;
+  //application_spacing_idx %= 1000;
+
   if (ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) {
+      GPIO_PinOutToggle(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
 
-          int i = 0;
+      //ITM->PORT[3].u32=CONSUMER_ENTRY
+      uint32_t start = DWT->CYCCNT;
 
-          while ((i < COMPRESSION_THRESHOLD) && !(_ring_buffer_empty(&_rb[sampleQidx]))) { // so N_COMPRESSION should define how many uint32 slots we want to grab out of sampleQidx
-               // some pointer to compressionQ *p
-              ring_buffer_get(sampleQidx, &compressionTemp[curIdx*NUM_SAMPLES]); // compressionTemp is of type uint32_t[], so it should realign each individual sample
-              i++;
 
-              // right now, i aim to fill up compressionTemp fully. we fill with N_COMPRESSION * NUM_SAMPLES amount of individual samples.
 
-              curIdx++;
 
-          }
-          //blueToothNotif = true;
-          curIdx = 0;
 
-          //compress(COMPRESSION_RATIO, compressionTemp, N_COMPRESSION, NUM_LEVELS, NUM_CHANNELS);
-          // chat should it be &compressionTemp[0] or what?
-          sendPacket();
+      int i = 0;
+
+      while ((i < COMPRESSION_THRESHOLD) && !(_ring_buffer_empty(&_rb[sampleQidx]))) { //
+           // some pointer to compressionQ *p
+          ring_buffer_get(sampleQidx, &compressionTemp[curIdx*NUM_SAMPLES]); //
+          i++;
+
+          // right now, i aim to fill up compressionTemp fully. we fill with N_COMPRESSION * NUM_SAMPLES amount of individual samples.
+
+          curIdx++;
 
       }
+      //blueToothNotif = true;
+      curIdx = 0;
+
+      //compress(COMPRESSION_RATIO, compressionTemp, N_COMPRESSION, NUM_LEVELS, NUM_CHANNELS);
+      sendPacket();
+
+      // ITM->PORT[3].u32=CONSUMER_EXIT;
+
+      GPIO_PinOutToggle(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
+      uint32_t stop = DWT->CYCCNT;
+      consumer_times[consumer_time_idx++] = ((float) (stop - start))/ ((float) core_freq);
+      consumer_time_idx %= 1000;
+
+  }
+
 }
 
 /**************************************************************************//**
