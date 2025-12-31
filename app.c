@@ -103,17 +103,22 @@ static uint8_t sampleCount = 0;
 //static bool compress_trigger;
 //static COMPRESSION_TYPE compressedQueue[COMPRESSED_Q_SIZE];
 static COMPRESSION_TYPE compressionTemp[COMPRESSED_BUFFER_SIZE];
-static uint8_t curIdx;
+static int curIdx;
 
-static uint8_t samples_lost = 0;
+static int samples_lost = 0;
+static int get_errors = 0;
 
 static uint32_t core_freq;
 
-static volatile float consumer_times[1000]; // how long does the dequeueing and sending take?
+volatile float consumer_times[1000]; // how long does the dequeueing and sending take?
 static volatile int consumer_time_idx = 0;
 
 static volatile float interrupt_times[1000]; // how long does the dequeueing and sending take?
 static volatile int interrupt_time_idx = 0;
+
+volatile float average_consumer_time = 0;
+volatile float total_consumer_time = 0;
+volatile bool take_average = false;
 //
 //static volatile uint32_t interrupt_spacings[1000]; // how frequently does the interrupt occur?
 //static volatile int interrupt_spacing_idx = 0;
@@ -363,7 +368,7 @@ void LDMA_IRQHandler(void)
 {
 
     //ITM->PORT[1].u32=ISR_ENTRY;
-    GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
+    //GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
 
 
 //    uint32_t now_irq = LETIMER_CounterGet(LETIMER0);
@@ -371,7 +376,7 @@ void LDMA_IRQHandler(void)
 //    last_irq = now_irq;
 //    interrupt_spacing_idx %= 1000;
 
-    uint32_t start = DWT->CYCCNT;
+    //uint32_t start = DWT->CYCCNT;
     LDMA_IntClear(LDMA_IF_DONE0);
 //    uint32_t now = LETIMER_CounterGet(LETIMER0);
 //    if (irq_idx < 1000) irq_times[irq_idx++] = now;
@@ -399,16 +404,16 @@ void LDMA_IRQHandler(void)
 //    }
 //    blueToothNotif = true
 
-    GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
+    //GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
 
 
 
   // Toggle LED0 to notify that transfers are complete
     //ITM->PORT[1].u32=ISR_EXIT;
     //printf(samples_lost);
-   uint32_t stop = DWT->CYCCNT;
-   interrupt_times[interrupt_time_idx++] = ((float) (stop - start))/ ((float) core_freq);
-   interrupt_time_idx %= 1000;
+//   uint32_t stop = DWT->CYCCNT;
+//   interrupt_times[interrupt_time_idx++] = ((float) (stop - start))/ ((float) core_freq);
+//   interrupt_time_idx %= 1000;
 }
 
 
@@ -491,7 +496,7 @@ typedef struct __attribute__((packed)) {
 // #define PACKET_ID_SIZE sizeof(uint16_t) //34 bytes 16 * uint16_t, 1 uint16_t
 #define BUFFER_MEMBER_SIZE sizeof(COMPRESSION_TYPE)
 #define PACKET_HEADER_SIZE sizeof(PacketHeader)
-#define MAX_SAMPLES_PER_PAYLOAD ((gattdb_iadc_result_len - PACKET_HEADER_SIZE) / BUFFER_MEMBER_SIZE) // 187 / 2 = 93...it'll send a max of 93 at a time.
+#define MAX_SAMPLES_PER_PAYLOAD ((gattdb_iadc_result_len - PACKET_HEADER_SIZE) / BUFFER_MEMBER_SIZE)
 
 sl_status_t sendPacket() {
   sl_status_t sc = SL_STATUS_OK;
@@ -502,8 +507,8 @@ sl_status_t sendPacket() {
 
 
   while (bufferIdx < COMPRESSED_BUFFER_SIZE){ // 240 is the max.
-    size_t samples_that_can_fit = COMPRESSED_BUFFER_SIZE - bufferIdx;
-    size_t samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
+    volatile size_t samples_that_can_fit = COMPRESSED_BUFFER_SIZE - bufferIdx;
+    volatile size_t samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
 
     PacketHeader header;
     header.packet_id = local_packet_id++;
@@ -512,14 +517,22 @@ sl_status_t sendPacket() {
     if ((bufferIdx + samples_used) >= COMPRESSED_BUFFER_SIZE) header.flags |= 0x02; // end
 
 
-    uint8_t packet[sizeof(PacketHeader) + samples_used * BUFFER_MEMBER_SIZE]; // 186 = 93*2.....but 187 is not. similarly, 108 = 54 * 2, but 109 is not.
-    memcpy(packet, &header, sizeof(PacketHeader)); // but the size of the packet was...190. the size of the packet was then changed to be 112. though it shoulve been 189 and 111.
+    uint8_t packet[sizeof(PacketHeader) + samples_used * BUFFER_MEMBER_SIZE];
+    memcpy(packet, &header, sizeof(PacketHeader));
     memcpy(packet + sizeof(PacketHeader), &compressionTemp[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
 
-    sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
+    do {
+        sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
+        if (sc == SL_STATUS_NO_MORE_RESOURCE || sc == SL_STATUS_IN_PROGRESS) {
+            sl_bt_run();
+        }
+    } while (sc == SL_STATUS_NO_MORE_RESOURCE || sc == SL_STATUS_IN_PROGRESS);
+
     if (sc != SL_STATUS_OK) {
         break;
     }
+
+
 
 
     bufferIdx += samples_used;
@@ -546,7 +559,7 @@ void app_process_action(void)
   //application_spacing_idx %= 1000;
 
   if (ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) {
-      GPIO_PinOutToggle(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
+      //GPIO_PinOutToggle(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
 
       //ITM->PORT[3].u32=CONSUMER_ENTRY
       uint32_t start = DWT->CYCCNT;
@@ -559,7 +572,11 @@ void app_process_action(void)
 
       while ((i < COMPRESSION_THRESHOLD) && !(_ring_buffer_empty(&_rb[sampleQidx]))) { //
            // some pointer to compressionQ *p
-          ring_buffer_get(sampleQidx, &compressionTemp[curIdx*NUM_SAMPLES]); //
+          int err = ring_buffer_get(sampleQidx, &compressionTemp[curIdx*NUM_SAMPLES]); //
+          if (err) {
+              get_errors++;
+          }
+
           i++;
 
           // right now, i aim to fill up compressionTemp fully. we fill with N_COMPRESSION * NUM_SAMPLES amount of individual samples.
@@ -575,10 +592,15 @@ void app_process_action(void)
 
       // ITM->PORT[3].u32=CONSUMER_EXIT;
 
-      GPIO_PinOutToggle(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
+      //GPIO_PinOutToggle(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
       uint32_t stop = DWT->CYCCNT;
       consumer_times[consumer_time_idx++] = ((float) (stop - start))/ ((float) core_freq);
-      consumer_time_idx %= 1000;
+
+      if (consumer_time_idx == 1000) {
+          take_average = true;
+          consumer_time_idx = 0;
+      }
+
 
   }
 

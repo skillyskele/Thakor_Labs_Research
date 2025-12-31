@@ -38,6 +38,8 @@
 #include "sl_main_process_action.h"
 #endif // SL_CATALOG_KERNEL_PRESENT
 
+#include "common_config.h"
+
 int main(void)
 {
   // Initialize Silicon Labs device, system, service(s) and protocol stack(s).
@@ -61,6 +63,15 @@ int main(void)
 
     // User provided code. Application process.
     app_process_action();
+
+    if (take_average) {
+        take_average = false;
+        total_consumer_time = 0;
+        for (int i = 0; i < 1000; i++) {
+            total_consumer_time += consumer_times[i];
+        }
+        average_consumer_time= total_consumer_time / 1000;
+    }
 
 #if defined(SL_CATALOG_POWER_MANAGER_PRESENT)
     // Let the CPU go to sleep if the system allows it.
