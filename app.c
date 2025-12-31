@@ -532,6 +532,12 @@ sl_status_t sendPacket() {
         break;
     }
 
+    // *** ARTIFICIAL DELAY - start ***
+        for (volatile int d = 0; d < 100000; ++d) {
+            // Do nothing, just burn some cycles
+        }
+        // *** ARTIFICIAL DELAY - end ***
+
 
 
 
