@@ -46,7 +46,10 @@
 #include "common_config.h"
 #include "ring_buffer.h"
 #include "test_signal_data.h"
+#include "em_burtc.h"
+
 #include <stdio.h>
+#include <stdbool.h>
 
 // Set CLK_ADC to 10MHz
 #define CLK_SRC_ADC_FREQ          20000000 // CLK_SRC_ADC
@@ -65,7 +68,7 @@
 #define LDMA_OUTPUT_0_PIN         4
 
 // Desired LETIMER frequency in Hz
-#define LETIMER_FREQ              5000
+#define LETIMER_FREQ              600
 
 // LETIMER GPIO toggle port/pin (toggled in EM2; requires port A/B GPIO)
 #define LETIMER_OUTPUT_0_PORT     gpioPortA
@@ -108,30 +111,40 @@ static int curIdx;
 static int samples_lost = 0;
 static int get_errors = 0;
 
-static uint32_t core_freq;
+//static uint32_t core_freq;
 
-volatile float consumer_times[1000]; // how long does the dequeueing and sending take?
-static volatile int consumer_time_idx = 0;
+//volatile float consumer_times[500]; // how long does the dequeueing and sending take?
+//static volatile int consumer_time_idx = 0;
+//
+//static volatile float interrupt_times[1000]; // how long does the dequeueing and sending take?
+//static volatile int interrupt_time_idx = 0;
 
-static volatile float interrupt_times[1000]; // how long does the dequeueing and sending take?
-static volatile int interrupt_time_idx = 0;
+static volatile int sampleQLengths[500];
+static volatile int sq_len_idx = 0;
+//
+//volatile float average_consumer_time = 0;
+//volatile float total_consumer_time = 0;
+//volatile bool take_average = false;
+//volatile uint32_t start;
+//volatile uint32_t stop;
+//
+//volatile float packet_times[500];
+//static volatile int packet_time_idx = 0;
+//volatile uint32_t p1 = 0;
+//volatile uint32_t p2 = 0;
 
-volatile float average_consumer_time = 0;
-volatile float total_consumer_time = 0;
-volatile bool take_average = false;
-//
-//static volatile uint32_t interrupt_spacings[1000]; // how frequently does the interrupt occur?
-//static volatile int interrupt_spacing_idx = 0;
-//static volatile uint32_t last_irq = 0;
-//
-//
-//
-//static volatile uint32_t application_spacings[1000]; // how frequently does the app_process_action fire?
-//static volatile int application_spacing_idx = 0;
-//static volatile uint32_t last_application = 0;
+
+
+// Event Based Bluetooth Sending Variables
+uint8_t* outgoing_data_ptr;
+uint32_t outgoing_total_bytes;
+uint32_t outgoing_bytes_sent;
+uint8_t  outgoing_packet_id;
+bool     tx_in_progress = false;
 
 
 static int test_idx = 0;
+static volatile int packets_complete;
 
 
 
@@ -289,6 +302,7 @@ void initClock(void)
   CMU_ClockSelectSet(cmuClock_EM23GRPACLK, cmuSelect_LFXO);
 }
 
+
 /**************************************************************************//**
  * @brief LETIMER initialization
  *****************************************************************************/
@@ -368,7 +382,6 @@ void LDMA_IRQHandler(void)
 {
 
     //ITM->PORT[1].u32=ISR_ENTRY;
-    //GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
 
 
 //    uint32_t now_irq = LETIMER_CounterGet(LETIMER0);
@@ -396,6 +409,8 @@ void LDMA_IRQHandler(void)
 
     if (err) {
       samples_lost++;
+    } else {
+        //GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
     }
 
 //    sampleCount++;
@@ -454,26 +469,17 @@ void app_init(void)
     };
     sampleQidx = 0;
     ring_buffer_init(&_rbd, &attr1); // make sampleQueue
-//
-//    sampleCount = 0;
 
-//    rb_attr_t attr2 = {
-//        .s_elem = sizeof(COMPRESSION_TYPE),
-//        .n_elem = COMPRESSED_Q_SIZE,
-//        .buffer = compressedQueue,
-//    };
-    //compressedQidx = 1;
-    //ring_buffer_init(&_rbd, &attr1);
-
-    //curIdx = 0;
 
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
-    core_freq = CMU_ClockFreqGet(cmuClock_HCLK);
+    packets_complete = 0;
+
+    // core_freq = CMU_ClockFreqGet(cmuClock_HCLK);
 
 
-
+    sl_bt_resource_enable_connection_tx_report(4); // this enables event based sending.
 
 
   #ifdef EM2DEBUG
@@ -485,6 +491,16 @@ void app_init(void)
 
 }
 
+void start_ble_transfer(uint8_t* data, uint32_t total_bytes)
+{
+    if (tx_in_progress) return;
+    outgoing_data_ptr = data;
+    outgoing_total_bytes = total_bytes; // could be expressed as total samples...
+    outgoing_bytes_sent = 0;
+    outgoing_packet_id = 0;
+    tx_in_progress = true;
+    send_next_notification();
+}
 
 
 typedef struct __attribute__((packed)) {
@@ -492,59 +508,51 @@ typedef struct __attribute__((packed)) {
     uint8_t flags;
 } PacketHeader;
 
-// we get 244 bytes per bluetooth packet
-// #define PACKET_ID_SIZE sizeof(uint16_t) //34 bytes 16 * uint16_t, 1 uint16_t
+// we get 244 bytes per bluetooth packet (not fully sure about this)
 #define BUFFER_MEMBER_SIZE sizeof(COMPRESSION_TYPE)
 #define PACKET_HEADER_SIZE sizeof(PacketHeader)
-#define MAX_SAMPLES_PER_PAYLOAD ((gattdb_iadc_result_len - PACKET_HEADER_SIZE) / BUFFER_MEMBER_SIZE)
+#define MAX_BYTES_PER_NOTIFICATION (gattdb_iadc_result_len - PACKET_HEADER_SIZE)
 
-sl_status_t sendPacket() {
-  sl_status_t sc = SL_STATUS_OK;
-  // find the number of samples that can fit
-  size_t bufferIdx = 0;
-  uint8_t local_packet_id = 0; // local ID for the current compressed chunk, its type must match max # elements in compressionTemp
-
-
-
-  while (bufferIdx < COMPRESSED_BUFFER_SIZE){ // 240 is the max.
-    volatile size_t samples_that_can_fit = COMPRESSED_BUFFER_SIZE - bufferIdx;
-    volatile size_t samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
-
-    PacketHeader header;
-    header.packet_id = local_packet_id++;
-    header.flags = 0;
-    if (bufferIdx == 0) header.flags |= 0x01; // start
-    if ((bufferIdx + samples_used) >= COMPRESSED_BUFFER_SIZE) header.flags |= 0x02; // end
-
-
-    uint8_t packet[sizeof(PacketHeader) + samples_used * BUFFER_MEMBER_SIZE];
-    memcpy(packet, &header, sizeof(PacketHeader));
-    memcpy(packet + sizeof(PacketHeader), &compressionTemp[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
-
-    do {
-        sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
-        if (sc == SL_STATUS_NO_MORE_RESOURCE || sc == SL_STATUS_IN_PROGRESS) {
-            sl_bt_run();
-        }
-    } while (sc == SL_STATUS_NO_MORE_RESOURCE || sc == SL_STATUS_IN_PROGRESS);
-
-    if (sc != SL_STATUS_OK) {
-        break;
+void send_next_notification()
+{
+    if ((outgoing_bytes_sent >= outgoing_total_bytes) || !(tx_in_progress)) {
+        return;
     }
 
-    // *** ARTIFICIAL DELAY - start ***
-        for (volatile int d = 0; d < 100000; ++d) {
-            // Do nothing, just burn some cycles
-        }
-        // *** ARTIFICIAL DELAY - end ***
+    // Calculate chunk size
+    uint32_t remaining = outgoing_total_bytes - outgoing_bytes_sent;
+    uint32_t cur_bytes_sent = (remaining > MAX_BYTES_PER_NOTIFICATION) ? MAX_BYTES_PER_NOTIFICATION : remaining;
 
 
+    PacketHeader header;
+    header.packet_id = outgoing_packet_id;
+    header.flags = 0;
+    if (outgoing_bytes_sent == 0) header.flags |= 0x01; // start
+    if ((outgoing_bytes_sent + cur_bytes_sent) >= outgoing_total_bytes) header.flags |= 0x02; // end
 
+    uint32_t packet_size = PACKET_HEADER_SIZE + cur_bytes_sent;
 
-    bufferIdx += samples_used;
-  }
-  return sc;
+    uint8_t packet[packet_size];
+    memcpy(packet, &header, PACKET_HEADER_SIZE);
+    memcpy(packet + PACKET_HEADER_SIZE, outgoing_data_ptr + outgoing_bytes_sent, cur_bytes_sent);
+
+    sl_status_t sc = sl_bt_gatt_server_notify_all(
+         gattdb_iadc_result,
+         packet_size,
+         packet
+    );
+
+    if (sc == SL_STATUS_OK) {
+        outgoing_bytes_sent += cur_bytes_sent;
+        outgoing_packet_id++;
+        // Do NOT queue up another packet yet! Wait for event first.
+    } else {
+        // could handle errors here
+    }
 }
+
+
+
 
 // Application Process Action.
 void app_process_action(void)
@@ -564,11 +572,14 @@ void app_process_action(void)
   //last_application = now_application;
   //application_spacing_idx %= 1000;
 
-  if (ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) {
-      //GPIO_PinOutToggle(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
+  if (ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD  && !tx_in_progress) {
+      GPIO_PinOutSet(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
 
       //ITM->PORT[3].u32=CONSUMER_ENTRY
-      uint32_t start = DWT->CYCCNT;
+      // start = DWT->CYCCNT;
+      GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
+
+
 
 
 
@@ -585,28 +596,15 @@ void app_process_action(void)
 
           i++;
 
-          // right now, i aim to fill up compressionTemp fully. we fill with N_COMPRESSION * NUM_SAMPLES amount of individual samples.
-
-          curIdx++;
+          curIdx++; // i don't need curIdx, I can just use i instead
 
       }
       //blueToothNotif = true;
       curIdx = 0;
 
-      //compress(COMPRESSION_RATIO, compressionTemp, N_COMPRESSION, NUM_LEVELS, NUM_CHANNELS);
-      sendPacket();
-
-      // ITM->PORT[3].u32=CONSUMER_EXIT;
+      start_ble_transfer(&compressionTemp, COMPRESSED_BUFFER_SIZE * BUFFER_MEMBER_SIZE );
 
       //GPIO_PinOutToggle(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
-      uint32_t stop = DWT->CYCCNT;
-      consumer_times[consumer_time_idx++] = ((float) (stop - start))/ ((float) core_freq);
-
-      if (consumer_time_idx == 1000) {
-          take_average = true;
-          consumer_time_idx = 0;
-      }
-
 
   }
 
@@ -653,9 +651,6 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
     // -------------------------------
     // This event indicates that a new connection was opened.
     case sl_bt_evt_connection_opened_id:
-      //printf("Device connected!\n"); // start sampling after connection...need timestamps and packet IDs
-      LETIMER_CounterSet(LETIMER0, LETIMER_CompareGet(LETIMER0, 0));  // Reset to top
-      LETIMER_Enable(LETIMER0, true);
       break;
 
     // -------------------------------
@@ -677,6 +672,45 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
     ///////////////////////////////////////////////////////////////////////////
     // Add additional event handlers here as your application requires!      //
     ///////////////////////////////////////////////////////////////////////////
+    case sl_bt_evt_gatt_server_characteristic_status_id:
+      if (evt->data.evt_gatt_server_characteristic_status.status_flags == sl_bt_gatt_server_client_config &&
+              evt->data.evt_gatt_server_characteristic_status.client_config_flags == sl_bt_gatt_notification) {
+                LETIMER_CounterSet(LETIMER0, LETIMER_CompareGet(LETIMER0, 0));  // Reset to top
+                LETIMER_Enable(LETIMER0, true);
+          }
+      break;
+
+    case  sl_bt_evt_gatt_server_notification_tx_completed_id:
+
+      if (outgoing_bytes_sent >= outgoing_total_bytes) {
+                tx_in_progress = false;
+                GPIO_PinOutClear(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
+                //GPIO_PinOutToggle(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
+                packets_complete++;
+                if (packets_complete == 8) {
+                    printf("Yo Bro");
+                }
+      //          stop = DWT->CYCCNT;
+      //          consumer_times[consumer_time_idx++] = ((float) (stop - start))/ ((float) core_freq);
+      //          if (consumer_time_idx == 500) {
+      //              take_average = true;
+      //              consumer_time_idx = 0;
+      //          }
+
+      }
+      if (tx_in_progress) {
+          // add array size to array of array sizes.
+          sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
+//          sq_len_idx %= 500;
+//          p2 = DWT->CYCCNT;
+//          packet_times[packet_time_idx++] =  ((float) (p2 - p1)) / ((float) core_freq);
+//          packet_time_idx %= 500;
+//          p1 = p2;
+          send_next_notification();
+          // GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
+      }
+
+      break;
 
     // -------------------------------
     // Default event handler.
