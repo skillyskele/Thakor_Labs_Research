@@ -63,8 +63,11 @@
 #define IADC_INPUT_1_BUSALLOC     GPIO_ABUSALLOC_AODD0_ADC0
 
 // LDMA transfer complete GPIO toggle port/pin
-#define LDMA_OUTPUT_0_PORT        gpioPortD
-#define LDMA_OUTPUT_0_PIN         2
+#define LDMA_OUTPUT_0_PORT        gpioPortA
+#define LDMA_OUTPUT_0_PIN         0
+
+#define CONSUMER_PROCESS_PORT     gpioPortB
+#define CONSUMER_PROCESS_PIN      4
 
 // Desired LETIMER frequency in Hz
 #define LETIMER_FREQ              600
