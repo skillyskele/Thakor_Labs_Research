@@ -7,9 +7,9 @@
 
 
 // original ring buffer specs
-#define NUM_SAMPLES               5 // each DMA transfer is one packet's worth of samples. one packet has NUM_SAMPLES samples.
+#define NUM_SAMPLES               1 // each DMA transfer is one packet's worth of samples. one packet has NUM_SAMPLES samples.
 typedef uint16_t SAMPLE_TYPE;
-#define SAMPLE_Q_SIZE  32
+#define SAMPLE_Q_SIZE  4096
 
 typedef struct {
     SAMPLE_TYPE samples[NUM_SAMPLES];
@@ -17,9 +17,9 @@ typedef struct {
 } SampleSlotType;
 
 // compression specs
-#define COMPRESSION_THRESHOLD 16
-#define N_COMPRESSION   16
-#define COMPRESS_AT_A_TIME 80 // must be N_COMPRESSION * NUM_SAMPLES
+#define COMPRESSION_THRESHOLD 144
+#define N_COMPRESSION   COMPRESSION_THRESHOLD
+#define COMPRESS_AT_A_TIME N_COMPRESSION // must be N_COMPRESSION * NUM_SAMPLES
 
 
 #define NUM_LEVELS 6 // should be floor(log2(COMPRESSED_BUFFER_SIZE)), always!!!

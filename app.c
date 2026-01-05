@@ -67,7 +67,7 @@
 #define LDMA_OUTPUT_0_PIN         2
 
 // Desired LETIMER frequency in Hz
-#define LETIMER_FREQ              5000
+#define LETIMER_FREQ              600
 
 // LETIMER GPIO toggle port/pin (toggled in EM2; requires port A/B GPIO)
 #define LETIMER_OUTPUT_0_PORT     gpioPortA
@@ -123,6 +123,7 @@ uint32_t outgoing_total_bytes;
 uint32_t outgoing_bytes_sent;
 uint8_t  outgoing_packet_id;
 bool     tx_in_progress = false;
+volatile static CodewordEntry codeword_results[MAX_CODEWORDS];  // this must be global, like compressionTemp in the other non-compression branch.
 
 
 volatile ble_transfer_state_t transfer_state = BLE_TRANSFER_IDLE;
@@ -421,6 +422,9 @@ void app_init(void)
     sampleQidx = 0;
     ring_buffer_init(&_rbd, &attr1); // make sampleQueue
 
+    sl_bt_resource_enable_connection_tx_report(4); // this enables event based sending.
+
+
 
 
 
@@ -527,7 +531,7 @@ sl_status_t send_next_notification() {
     packet[0] = PACKET_TYPE_DATA;
 
     memcpy(packet + 1, &header, PACKET_HEADER_SIZE);
-    memcpy(packet + PACKET_HEADER_SIZE, outgoing_data_ptr + outgoing_bytes_sent, cur_bytes_sent);
+    memcpy(packet + 1 + PACKET_HEADER_SIZE, outgoing_data_ptr + outgoing_bytes_sent, cur_bytes_sent);
 
     sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
     if (sc == SL_STATUS_OK) {
@@ -575,14 +579,13 @@ void app_process_action(void)
 
           COEFFICIENT_TYPE quant;
           int num_nnz;
-          CodewordEntry codeword_results[MAX_CODEWORDS];
           int compressed_signal_length;
 
 
           compress(wave, wave_transform, COMPRESSION_RATIO, compressionTemp, COMPRESS_AT_A_TIME, NUM_LEVELS,
                    NUM_CHANNELS, codeword_results, &num_nnz, &quant, &compressed_signal_length);
 
-          start_ble_transfer((uint8_t*)codeword_results, (uint32_t) num_nnz*sizeof(COEFFICIENT_TYPE), &quant, wave_transform->length);
+          start_ble_transfer((uint8_t*)codeword_results, (uint32_t) num_nnz*sizeof(CodewordEntry), &quant, wave_transform->length);
 
 
 
@@ -671,11 +674,11 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
             transfer_state = BLE_TRANSFER_SENDING_DATA;
             send_next_notification(); // begin normal data transfer
         } else if (transfer_state == BLE_TRANSFER_SENDING_DATA) {
-            if (outgoing_bytes_sent < outgoing_total_bytes) {
-                send_next_notification();
-            } else {
+            if (outgoing_bytes_sent <= outgoing_total_bytes) {
                 transfer_state = BLE_TRANSFER_IDLE;
                 tx_in_progress = false;
+            } else {
+                send_next_notification();
             }
         }
 
