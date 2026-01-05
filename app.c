@@ -118,6 +118,15 @@ int wt_pool_used[MAX_WT_OBJECTS] = {0};
 wave_object wave;
 wt_object wave_transform;
 
+uint8_t* outgoing_data_ptr;
+uint32_t outgoing_total_bytes;
+uint32_t outgoing_bytes_sent;
+uint8_t  outgoing_packet_id;
+bool     tx_in_progress = false;
+
+
+volatile ble_transfer_state_t transfer_state = BLE_TRANSFER_IDLE;
+
 
 static int test_idx = 0; // used to index into test_signal which is defined in test_signal_data.c
 
@@ -444,80 +453,90 @@ typedef struct __attribute__((packed)) {
 
 #define BUFFER_MEMBER_SIZE sizeof(CodewordEntry) // it's 8 bytes
 #define PACKET_HEADER_SIZE sizeof(PacketHeader) // 3 bytes
-#define MAX_SAMPLES_PER_PAYLOAD ((gattdb_iadc_result_len - 1 - PACKET_HEADER_SIZE) / BUFFER_MEMBER_SIZE) // should be 31
+#define MAX_BYTES_PER_NOTIFICATION (gattdb_iadc_result_len - 1 - PACKET_HEADER_SIZE)
 
 #define PACKET_TYPE_START 0x01
 #define PACKET_TYPE_DATA  0x02
+
+
+void start_ble_transfer(uint8_t* data, uint32_t total_bytes, COEFFICIENT_TYPE* quant, int* book_keeping)
+{
+    if (tx_in_progress) return;
+    outgoing_data_ptr = data;
+    outgoing_total_bytes = total_bytes;
+    outgoing_bytes_sent = 0;
+    outgoing_packet_id = 0;
+    tx_in_progress = true;
+    transfer_state = BLE_TRANSFER_SENDING_HEADER;
+    send_start_packet(quant, book_keeping);
+}
+void send_start_packet(COEFFICIENT_TYPE* quant, int* book_keeping) {
+  // fill up the start_header
+    StartHeader start_header;
+    start_header.quant = *quant;
+    start_header.num_levels = NUM_LEVELS;
+    for (int i = 0; i < NUM_LEVELS; i++) {
+        start_header.book_keeping[i] = book_keeping[i];
+    }
+
+    // create the start_packet and ZERO IT OUT
+    uint8_t start_packet[1 + sizeof(StartHeader)];
+    memset(start_packet, 0, sizeof(start_packet));
+
+    start_packet[0] = PACKET_TYPE_START; // first byte always tells what type of packet it is
+
+    memcpy(start_packet + 1, &start_header, sizeof(StartHeader));
+
+    // send it off
+    volatile sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(start_packet), start_packet);
+
+    if (sc != SL_STATUS_OK) {
+        // retry?? no clue
+    } else {
+        // what to say??
+    }
+
+
+}
+
 
 /**
  * The purpose of the sendPacket() function is to greedily send as much data per packet
  * until all the compressed values have been relayed
  */
 
-sl_status_t sendPacket(CodewordEntry* codeword_results, int* num_nnz, COEFFICIENT_TYPE* quant, int* compressed_signal_length, int* book_keeping) {
-  sl_status_t sc = SL_STATUS_OK;
-
-  // find the number of samples that can fit
-  int bufferIdx = 0;
-  uint16_t local_packet_id = 0; // local ID for the current compressed chunk, its type must be able to contain max # elements in compressionTemp
-
-  // Send the StartHeader once at the very start
-
-  // fill up the start_header
-  StartHeader start_header;
-  start_header.quant = *quant;
-  start_header.num_levels = NUM_LEVELS;
-  for (int i = 0; i < NUM_LEVELS; i++) {
-      start_header.book_keeping[i] = book_keeping[i];
-  }
-
-  // create the start_packet and ZERO IT OUT
-  uint8_t start_packet[1 + sizeof(StartHeader)];
-  memset(start_packet, 0, sizeof(start_packet));
-
-  start_packet[0] = PACKET_TYPE_START; // first byte always tells what type of packet it is
-
-  memcpy(start_packet + 1, &start_header, sizeof(StartHeader));
-
-  // send it off
-  sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(start_packet), start_packet);
-
-  if (sc != SL_STATUS_OK) {
-      return sc;
-  }
+sl_status_t send_next_notification() {
+    sl_status_t sc = SL_STATUS_OK;
 
 
-  // while we haven't sent every nonzero value yet, keep going
-  while (bufferIdx < *num_nnz){ // 11 is the max.
-    int samples_that_can_fit = *num_nnz - bufferIdx;
-    int samples_used = (samples_that_can_fit > MAX_SAMPLES_PER_PAYLOAD) ? MAX_SAMPLES_PER_PAYLOAD : samples_that_can_fit;
-
+    // Send the StartHeader once at the very start
+    uint32_t remaining = outgoing_total_bytes - outgoing_bytes_sent;
+    uint32_t cur_bytes_sent = (remaining > MAX_BYTES_PER_NOTIFICATION) ? MAX_BYTES_PER_NOTIFICATION : remaining;
 
     PacketHeader header;
-    header.packet_id = local_packet_id++;
+    header.packet_id = outgoing_packet_id;
     header.flags = 0;
-    if (bufferIdx == 0) header.flags |= 0x01; // start
-    if ((bufferIdx + samples_used) >= *num_nnz) header.flags |= 0x02; // end
+    if (outgoing_bytes_sent == 0) header.flags |= 0x01; // start
+    if ((outgoing_bytes_sent + cur_bytes_sent) >= outgoing_total_bytes) header.flags |= 0x02; // end
 
     // make data packet and ZERO IT OUT
-    uint8_t packet[1 + sizeof(PacketHeader) + samples_used * BUFFER_MEMBER_SIZE];
+    uint8_t packet[1 + PACKET_HEADER_SIZE + cur_bytes_sent];
+
     memset(packet, 0, sizeof(packet));
 
     packet[0] = PACKET_TYPE_DATA;
 
-    memcpy(packet + 1, &header, sizeof(PacketHeader));
+    memcpy(packet + 1, &header, PACKET_HEADER_SIZE);
+    memcpy(packet + PACKET_HEADER_SIZE, outgoing_data_ptr + outgoing_bytes_sent, cur_bytes_sent);
 
-    memcpy(packet + 1 + sizeof(PacketHeader), &codeword_results[bufferIdx], samples_used * BUFFER_MEMBER_SIZE);
+    sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
+    if (sc == SL_STATUS_OK) {
+         outgoing_bytes_sent += cur_bytes_sent;
+         outgoing_packet_id++;
+     } else {
+         // could handle errors here
+     }
 
-
-    sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
-    if (sc != SL_STATUS_OK) {
-        break;
-    }
-
-
-    bufferIdx += samples_used;
-  }
 
   return sc;
 }
@@ -534,7 +553,7 @@ void app_process_action(void)
 //      sendPacket();
 //  }
 
-  if (ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) {
+  if ((ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) && !tx_in_progress) {
 
           int i = 0;
 
@@ -563,8 +582,9 @@ void app_process_action(void)
           compress(wave, wave_transform, COMPRESSION_RATIO, compressionTemp, COMPRESS_AT_A_TIME, NUM_LEVELS,
                    NUM_CHANNELS, codeword_results, &num_nnz, &quant, &compressed_signal_length);
 
-          // chat should it be &compressionTemp[0] or what?
-          sendPacket(codeword_results, &num_nnz, &quant, &compressed_signal_length, wave_transform->length); // might have to take in a NUM_CHANNELS parameter in the future but not for now!
+          start_ble_transfer((uint8_t*)codeword_results, (uint32_t) num_nnz*sizeof(COEFFICIENT_TYPE), &quant, wave_transform->length);
+
+
 
       }
 }
@@ -611,10 +631,7 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
     // This event indicates that a new connection was opened.
     case sl_bt_evt_connection_opened_id:
       //printf("Device connected!\n"); // start sampling after connection...need timestamps and packet IDs
-      wave = wave_init("db4");
-      wave_transform = wt_init(wave, "dwt", COMPRESS_AT_A_TIME, NUM_LEVELS);
-      LETIMER_CounterSet(LETIMER0, LETIMER_CompareGet(LETIMER0, 0));  // Reset to top
-      LETIMER_Enable(LETIMER0, true);
+
       break;
 
     // -------------------------------
@@ -638,6 +655,31 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
     ///////////////////////////////////////////////////////////////////////////
     // Add additional event handlers here as your application requires!      //
     ///////////////////////////////////////////////////////////////////////////
+
+    case sl_bt_evt_gatt_server_characteristic_status_id:
+         if (evt->data.evt_gatt_server_characteristic_status.status_flags == sl_bt_gatt_server_client_config &&
+             evt->data.evt_gatt_server_characteristic_status.client_config_flags == sl_bt_gatt_notification) {
+             wave = wave_init("db4");
+             wave_transform = wt_init(wave, "dwt", COMPRESS_AT_A_TIME, NUM_LEVELS);
+             LETIMER_CounterSet(LETIMER0, LETIMER_CompareGet(LETIMER0, 0));  // Reset to top
+             LETIMER_Enable(LETIMER0, true);
+         }
+         break;
+
+    case sl_bt_evt_gatt_server_notification_tx_completed_id:
+        if (transfer_state == BLE_TRANSFER_SENDING_HEADER) {
+            transfer_state = BLE_TRANSFER_SENDING_DATA;
+            send_next_notification(); // begin normal data transfer
+        } else if (transfer_state == BLE_TRANSFER_SENDING_DATA) {
+            if (outgoing_bytes_sent < outgoing_total_bytes) {
+                send_next_notification();
+            } else {
+                transfer_state = BLE_TRANSFER_IDLE;
+                tx_in_progress = false;
+            }
+        }
+
+        break;
 
     // -------------------------------
     // Default event handler.

@@ -28,6 +28,12 @@ typedef struct {
 #define MAX_CODEWORDS COMPRESS_AT_A_TIME/2
 #define COMPRESSION_RATIO 0.1
 
+// some bluetooth definitions, just for clarity
+typedef enum {
+    BLE_TRANSFER_IDLE,
+    BLE_TRANSFER_SENDING_HEADER,
+    BLE_TRANSFER_SENDING_DATA
+} ble_transfer_state_t;
 
 
 #endif // COMMON_CONFIG_H_
