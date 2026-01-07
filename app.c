@@ -63,14 +63,14 @@
 #define IADC_INPUT_1_BUSALLOC     GPIO_ABUSALLOC_AODD0_ADC0
 
 // LDMA transfer complete GPIO toggle port/pin
-#define LDMA_OUTPUT_0_PORT        gpioPortA
-#define LDMA_OUTPUT_0_PIN         0
+#define LDMA_OUTPUT_0_PORT        gpioPortB
+#define LDMA_OUTPUT_0_PIN         4
 
-#define CONSUMER_PROCESS_PORT     gpioPortB
-#define CONSUMER_PROCESS_PIN      4
+#define CONSUMER_OUTPUT_PORT      gpioPortA
+#define CONSUMER_OUTPUT_PIN       0
 
 // Desired LETIMER frequency in Hz
-#define LETIMER_FREQ              600
+#define LETIMER_FREQ              1000
 
 // LETIMER GPIO toggle port/pin (toggled in EM2; requires port A/B GPIO)
 #define LETIMER_OUTPUT_0_PORT     gpioPortA
@@ -133,6 +133,10 @@ volatile ble_transfer_state_t transfer_state = BLE_TRANSFER_IDLE;
 
 
 static int test_idx = 0; // used to index into test_signal which is defined in test_signal_data.c
+
+
+static volatile int sampleQLengths[500];
+static volatile int sq_len_idx = 0;
 
 
 /**************************************************************************//**
@@ -385,7 +389,6 @@ void LDMA_IRQHandler(void)
     }
 
   // Toggle LED0 to notify that transfers are complete
-  GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
 }
 
 
@@ -450,7 +453,7 @@ typedef struct __attribute__((packed)) {
                                 // What is the original signal length? It's the wave_transform->outlength, which represents the length of the sparse representation coefficients, whose calculation can be found in wavedec.c
                                 // Is type must be large enough to represent the max output length. For example, for a signal chunk of 6000, we expect
     uint8_t num_levels;
-    int book_keeping[NUM_LEVELS]; // it's better to send the book keeping vector for python to reconstruct with!
+    int book_keeping[NUM_LEVELS + 1]; // it's better to send the book keeping vector for python to reconstruct with!
 } StartHeader; // size is NUM_LEVELS amount of int + one float.
 
 typedef struct __attribute__((packed)) {
@@ -481,8 +484,8 @@ void send_start_packet(COEFFICIENT_TYPE* quant, int* book_keeping) {
   // fill up the start_header
     StartHeader start_header;
     start_header.quant = *quant;
-    start_header.num_levels = NUM_LEVELS;
-    for (int i = 0; i < NUM_LEVELS; i++) {
+    start_header.num_levels = NUM_LEVELS + 1;
+    for (int i = 0; i < NUM_LEVELS + 1; i++) {
         start_header.book_keeping[i] = book_keeping[i];
     }
 
@@ -561,6 +564,8 @@ void app_process_action(void)
 //  }
 
   if ((ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) && !tx_in_progress) {
+      GPIO_PinOutSet(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN); // this is for marking how long the consumer process actually is. pin F9 on the board
+
 
           int i = 0;
 
@@ -645,8 +650,9 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
     case sl_bt_evt_connection_closed_id:
       // Generate data for advertising
       LETIMER_Enable(LETIMER0, false);
-      //wave_free(wave);
-      //wt_free(wave_transform);
+      _rbd = 0;
+      wave_free(wave);
+      wt_free(wave_transform);
 
       sc = sl_bt_legacy_advertiser_generate_data(advertising_set_handle,
                                                  sl_bt_advertiser_general_discoverable); // stop sampling after connection
@@ -673,13 +679,20 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
          break;
 
     case sl_bt_evt_gatt_server_notification_tx_completed_id:
+      sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
+      sq_len_idx %= 500;
+      GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN); // this is for marking how often it enters the consumer process. pin F11 on the board
+
         if (transfer_state == BLE_TRANSFER_SENDING_HEADER) {
             transfer_state = BLE_TRANSFER_SENDING_DATA;
             send_next_notification(); // begin normal data transfer
+            // count time now
         } else if (transfer_state == BLE_TRANSFER_SENDING_DATA) {
-            if (outgoing_bytes_sent <= outgoing_total_bytes) {
+            if (outgoing_bytes_sent >= outgoing_total_bytes) {
                 transfer_state = BLE_TRANSFER_IDLE;
                 tx_in_progress = false;
+                GPIO_PinOutClear(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
+
             } else {
                 send_next_notification();
             }

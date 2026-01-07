@@ -174,6 +174,9 @@ wt_object wt_init(wave_object wave, const char *method, int siglength, int J) //
 
     // malloc the length array to J+1
     obj->length = (int*)malloc(sizeof(int) * (J + 2)); // J levels + final approximation + length[0] for convenience
+    if (obj->length == NULL) {
+        return; // catch this error!
+    }
 
 
     // calculate how long the output will be
@@ -205,6 +208,9 @@ wt_object wt_init(wave_object wave, const char *method, int siglength, int J) //
 
     // malloc the dwt_coeff array to outlength
     obj->dwt_coeff = (COEFFICIENT_TYPE*)malloc(sizeof(COEFFICIENT_TYPE) * (obj->outlength));
+    if (obj->dwt_coeff == NULL) {
+        return; // catch this error!
+    }
     obj->output = obj->dwt_coeff; // point output to dwt_coeff for convenience
     return obj;
 }
