@@ -498,6 +498,9 @@ void send_start_packet(COEFFICIENT_TYPE* quant, int* book_keeping) {
     memcpy(start_packet + 1, &start_header, sizeof(StartHeader));
 
     // send it off
+
+    GPIO_PinOutClear(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN); // this is for marking how long the consumer process actually is. pin F9 on the board
+
     volatile sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(start_packet), start_packet);
 
     if (sc != SL_STATUS_OK) {
@@ -539,6 +542,8 @@ sl_status_t send_next_notification() {
     memcpy(packet + 1, &header, PACKET_HEADER_SIZE);
     memcpy(packet + 1 + PACKET_HEADER_SIZE, outgoing_data_ptr + outgoing_bytes_sent, cur_bytes_sent);
 
+    GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN); // this is for marking how often it enters the consumer process. pin F11 on the board
+
     sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
     if (sc == SL_STATUS_OK) {
          outgoing_bytes_sent += cur_bytes_sent;
@@ -564,7 +569,9 @@ void app_process_action(void)
 //  }
 
   if ((ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) && !tx_in_progress) {
-      GPIO_PinOutSet(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN); // this is for marking how long the consumer process actually is. pin F9 on the board
+      GPIO_PinOutSet(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
+      sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
+      sq_len_idx %= 500;
 
 
           int i = 0;
@@ -679,11 +686,11 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
          break;
 
     case sl_bt_evt_gatt_server_notification_tx_completed_id:
-      sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
-      sq_len_idx %= 500;
-      GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN); // this is for marking how often it enters the consumer process. pin F11 on the board
+
+
 
         if (transfer_state == BLE_TRANSFER_SENDING_HEADER) {
+
             transfer_state = BLE_TRANSFER_SENDING_DATA;
             send_next_notification(); // begin normal data transfer
             // count time now
@@ -691,10 +698,14 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
             if (outgoing_bytes_sent >= outgoing_total_bytes) {
                 transfer_state = BLE_TRANSFER_IDLE;
                 tx_in_progress = false;
-                GPIO_PinOutClear(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
+                sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
+                sq_len_idx %= 500;
+
+
 
             } else {
                 send_next_notification();
+
             }
         }
 
