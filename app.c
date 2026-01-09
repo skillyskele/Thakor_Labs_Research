@@ -585,7 +585,16 @@ void app_process_action(void)
 
 
 
+      if (number_transmissions == 0) {
+          GPIO_PinOutSet(UIF_LED0_PORT, UIF_LED0_PIN);
+      }
 
+      number_transmissions++;
+
+      if (number_transmissions == 11) {
+          GPIO_PinOutClear(UIF_LED0_PORT, UIF_LED0_PIN);
+          number_transmissions = 0;
+      }
 
 
 
@@ -687,21 +696,11 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
       break;
 
     case  sl_bt_evt_gatt_server_notification_tx_completed_id:
-      sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
-      sq_len_idx %= 500;
-
-
 
 
       if (outgoing_bytes_sent >= outgoing_total_bytes) {
-          if (number_transmissions == 0) {
-              GPIO_PinOutSet(UIF_LED0_PORT, UIF_LED0_PIN);
-          }
-          number_transmissions++;
-          if (number_transmissions == 10) {
-              GPIO_PinOutClear(UIF_LED0_PORT, UIF_LED0_PIN);
-              number_transmissions = 0;
-          }
+
+
                 tx_in_progress = false;
 
       //          stop = DWT->CYCCNT;
