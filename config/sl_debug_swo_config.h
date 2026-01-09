@@ -46,11 +46,11 @@
 
 // <q SL_DEBUG_SWO_SAMPLE_IRQ> Enable interrupt event trace
 // <i> Default: 0
-#define SL_DEBUG_SWO_SAMPLE_IRQ                 0
+#define SL_DEBUG_SWO_SAMPLE_IRQ                 1
 
 // <q SL_DEBUG_SWO_SAMPLE_PC> Enable Program Counter samples
 // <i> Default: 0
-#define SL_DEBUG_SWO_SAMPLE_PC                  0
+#define SL_DEBUG_SWO_SAMPLE_PC                  1
 
 // <o SL_DEBUG_SWO_SAMPLE_INTERVAL> SWO debug sample intervals
 // <64=>    64

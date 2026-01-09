@@ -63,12 +63,15 @@
 #define IADC_INPUT_1_BUS          ABUSALLOC
 #define IADC_INPUT_1_BUSALLOC     GPIO_ABUSALLOC_AODD0_ADC0
 
-// LDMA transfer complete GPIO toggle port/pin
-#define LDMA_OUTPUT_0_PORT        gpioPortB
-#define LDMA_OUTPUT_0_PIN         4
+// Energy Profiler Markers
+#define UIF_LED1_PORT        gpioPortB
+#define UIF_LED1_PIN         4
+
+#define UIF_LED0_PORT        gpioPortB
+#define UIF_LED0_PIN         2
 
 // Desired LETIMER frequency in Hz
-#define LETIMER_FREQ              600
+#define LETIMER_FREQ              700
 
 // LETIMER GPIO toggle port/pin (toggled in EM2; requires port A/B GPIO)
 #define LETIMER_OUTPUT_0_PORT     gpioPortA
@@ -100,7 +103,7 @@ uint32_t scanBuffer[NUM_SAMPLES];
 static rbd_t _rbd = 0;
 static rbd_t sampleQidx = 0;
 static SampleSlotType sampleQueue[SAMPLE_Q_SIZE]; // just a continuous array of uint32_t
-static uint8_t sampleCount = 0;
+static uint8_t number_transmissions = 0;
 
 //static rbd_t compressedQidx;
 //static bool compress_trigger;
@@ -146,8 +149,10 @@ bool     tx_in_progress = false;
 static int test_idx = 0;
 static volatile int packets_complete;
 
-
-
+// used for energy profiling!
+//void PendSV_Handler(void) {
+//    // Your code here (even if empty)
+//}
 
 /**************************************************************************//**
  * @brief  GPIO Initializer
@@ -158,9 +163,9 @@ void initGPIO (void)
   CMU_ClockEnable(cmuClock_GPIO, true);
 
   // Configure LDMA/LETIMER as outputs
-  GPIO_PinModeSet(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN, gpioModePushPull, 0);
+  GPIO_PinModeSet(UIF_LED0_PORT, UIF_LED0_PIN, gpioModePushPull, 0);
+  GPIO_PinModeSet(UIF_LED1_PORT, UIF_LED1_PIN, gpioModePushPull, 0);
   GPIO_PinModeSet(LETIMER_OUTPUT_0_PORT, LETIMER_OUTPUT_0_PIN, gpioModePushPull, 0);
-  GPIO_PinModeSet(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN, gpioModePushPull, 0);
 }
 
 /**************************************************************************//**
@@ -398,9 +403,9 @@ void LDMA_IRQHandler(void)
     SAMPLE_TYPE iadcResults[NUM_SAMPLES];
 
     for (uint32_t i = 0; i < NUM_SAMPLES; i++) {
-        // iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
-        iadcResults[i] = test_signal[test_idx]; // COMMENT THIS OUT
-        test_idx = (test_idx + 1) % 1000;        // AND UNCOMMENT SCANBUFFER CODE FOR NORMAL OPERATION
+        iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
+        //iadcResults[i] = test_signal[test_idx]; // COMMENT THIS OUT
+        //test_idx = (test_idx + 1) % 5000;        // AND UNCOMMENT SCANBUFFER CODE FOR NORMAL OPERATION
     }
 
 
@@ -410,7 +415,6 @@ void LDMA_IRQHandler(void)
     if (err) {
       samples_lost++;
     } else {
-        //GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
     }
 
 //    sampleCount++;
@@ -419,11 +423,9 @@ void LDMA_IRQHandler(void)
 //    }
 //    blueToothNotif = true
 
-    //GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
 
 
 
-  // Toggle LED0 to notify that transfers are complete
     //ITM->PORT[1].u32=ISR_EXIT;
     //printf(samples_lost);
 //   uint32_t stop = DWT->CYCCNT;
@@ -491,6 +493,8 @@ void app_init(void)
 
 }
 
+
+
 void start_ble_transfer(uint8_t* data, uint32_t total_bytes)
 {
     if (tx_in_progress) return;
@@ -536,6 +540,7 @@ void send_next_notification()
     memcpy(packet, &header, PACKET_HEADER_SIZE);
     memcpy(packet + PACKET_HEADER_SIZE, outgoing_data_ptr + outgoing_bytes_sent, cur_bytes_sent);
 
+
     sl_status_t sc = sl_bt_gatt_server_notify_all(
          gattdb_iadc_result,
          packet_size,
@@ -573,11 +578,12 @@ void app_process_action(void)
   //application_spacing_idx %= 1000;
 
   if (ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD  && !tx_in_progress) {
-      GPIO_PinOutSet(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
 
       //ITM->PORT[3].u32=CONSUMER_ENTRY
       // start = DWT->CYCCNT;
-      GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
+
+
+
 
 
 
@@ -604,7 +610,6 @@ void app_process_action(void)
 
       start_ble_transfer(&compressionTemp, COMPRESSED_BUFFER_SIZE * BUFFER_MEMBER_SIZE );
 
-      //GPIO_PinOutToggle(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
 
   }
 
@@ -673,6 +678,7 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
     // Add additional event handlers here as your application requires!      //
     ///////////////////////////////////////////////////////////////////////////
     case sl_bt_evt_gatt_server_characteristic_status_id:
+
       if (evt->data.evt_gatt_server_characteristic_status.status_flags == sl_bt_gatt_server_client_config &&
               evt->data.evt_gatt_server_characteristic_status.client_config_flags == sl_bt_gatt_notification) {
                 LETIMER_CounterSet(LETIMER0, LETIMER_CompareGet(LETIMER0, 0));  // Reset to top
@@ -681,15 +687,23 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
       break;
 
     case  sl_bt_evt_gatt_server_notification_tx_completed_id:
+      sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
+      sq_len_idx %= 500;
+
+
+
 
       if (outgoing_bytes_sent >= outgoing_total_bytes) {
+          if (number_transmissions == 0) {
+              GPIO_PinOutSet(UIF_LED0_PORT, UIF_LED0_PIN);
+          }
+          number_transmissions++;
+          if (number_transmissions == 10) {
+              GPIO_PinOutClear(UIF_LED0_PORT, UIF_LED0_PIN);
+              number_transmissions = 0;
+          }
                 tx_in_progress = false;
-                GPIO_PinOutClear(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
-                //GPIO_PinOutToggle(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
-                packets_complete++;
-                if (packets_complete == 8) {
-                    printf("Yo Bro");
-                }
+
       //          stop = DWT->CYCCNT;
       //          consumer_times[consumer_time_idx++] = ((float) (stop - start))/ ((float) core_freq);
       //          if (consumer_time_idx == 500) {
@@ -697,17 +711,12 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
       //              consumer_time_idx = 0;
       //          }
 
+
       }
       if (tx_in_progress) {
-          // add array size to array of array sizes.
-          sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
-//          sq_len_idx %= 500;
-//          p2 = DWT->CYCCNT;
-//          packet_times[packet_time_idx++] =  ((float) (p2 - p1)) / ((float) core_freq);
-//          packet_time_idx %= 500;
-//          p1 = p2;
+
           send_next_notification();
-          // GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN);
+
       }
 
       break;
