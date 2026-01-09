@@ -17,7 +17,7 @@ typedef struct {
 } SampleSlotType;
 
 // compression specs
-#define COMPRESSION_THRESHOLD 8000
+#define COMPRESSION_THRESHOLD 80
 #define N_COMPRESSION   COMPRESSION_THRESHOLD
 #define COMPRESS_AT_A_TIME N_COMPRESSION // must be N_COMPRESSION * NUM_SAMPLES
 

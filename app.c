@@ -62,9 +62,12 @@
 #define IADC_INPUT_1_BUS          ABUSALLOC
 #define IADC_INPUT_1_BUSALLOC     GPIO_ABUSALLOC_AODD0_ADC0
 
-// LDMA transfer complete GPIO toggle port/pin
-#define LDMA_OUTPUT_0_PORT        gpioPortB
-#define LDMA_OUTPUT_0_PIN         4
+// Energy Profiler Markers
+#define UIF_LED1_PORT        gpioPortB
+#define UIF_LED1_PIN         4
+
+#define UIF_LED0_PORT        gpioPortB
+#define UIF_LED0_PIN         2
 
 #define CONSUMER_OUTPUT_PORT      gpioPortA
 #define CONSUMER_OUTPUT_PIN       0
@@ -102,6 +105,8 @@ uint32_t scanBuffer[NUM_SAMPLES];
 static rbd_t _rbd = 0;
 static rbd_t sampleQidx = 0;
 static SampleSlotType sampleQueue[SAMPLE_Q_SIZE];
+static uint8_t number_transmissions = 0;
+
 
 //static rbd_t compressedQidx;
 static bool compress_trigger;
@@ -569,9 +574,9 @@ void app_process_action(void)
 //  }
 
   if ((ring_buffer_length(sampleQidx) >= COMPRESSION_THRESHOLD) && !tx_in_progress) {
-      GPIO_PinOutSet(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN);
-      sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
-      sq_len_idx %= 500;
+      if (number_transmissions == 0) {
+          GPIO_PinOutSet(UIF_LED0_PORT, UIF_LED0_PIN);
+      }
 
 
           int i = 0;
@@ -698,8 +703,16 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
             if (outgoing_bytes_sent >= outgoing_total_bytes) {
                 transfer_state = BLE_TRANSFER_IDLE;
                 tx_in_progress = false;
-                sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
-                sq_len_idx %= 500;
+//                sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
+//                sq_len_idx %= 500;
+
+                number_transmissions++;
+
+                if (number_transmissions == 10) {
+                    GPIO_PinOutClear(UIF_LED0_PORT, UIF_LED0_PIN);
+                    number_transmissions = 0;
+                }
+
 
 
 
