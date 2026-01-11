@@ -3,7 +3,7 @@
 
 #include "common_config.h"
 
-#define TEST_SIGNAL_LEN 5000
+#define TEST_SIGNAL_LEN 8090
 
 extern SAMPLE_TYPE test_signal[TEST_SIGNAL_LEN];
 

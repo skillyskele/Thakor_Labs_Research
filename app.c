@@ -153,8 +153,7 @@ void initGPIO (void)
   CMU_ClockEnable(cmuClock_GPIO, true);
 
   // Configure LDMA/LETIMER as outputs
-  GPIO_PinModeSet(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN, gpioModePushPull, 0);
-  GPIO_PinModeSet(LETIMER_OUTPUT_0_PORT, LETIMER_OUTPUT_0_PIN, gpioModePushPull, 0);
+  GPIO_PinModeSet(UIF_LED0_PORT, UIF_LED0_PIN, gpioModePushPull, 0);
 }
 
 /**************************************************************************//**
@@ -385,7 +384,7 @@ void LDMA_IRQHandler(void)
         //iadcResults[i] = (SAMPLE_TYPE)(scanBuffer[i] & 0xFFF); // mask the bottom 12 bits for the right iadc value
 
         iadcResults[i] = test_signal[test_idx]; // COMMENT THIS OUT
-        test_idx = (test_idx + 1) % 1000;        // AND UNCOMMENT SCANBUFFER CODE FOR NORMAL OPERATION
+        test_idx = (test_idx + 1) % COMPRESSION_THRESHOLD;        // AND UNCOMMENT SCANBUFFER CODE FOR NORMAL OPERATION
     }
     int err = ring_buffer_put(sampleQidx, iadcResults); // throw it into the sample queue!
 
@@ -504,8 +503,6 @@ void send_start_packet(COEFFICIENT_TYPE* quant, int* book_keeping) {
 
     // send it off
 
-    GPIO_PinOutClear(CONSUMER_OUTPUT_PORT, CONSUMER_OUTPUT_PIN); // this is for marking how long the consumer process actually is. pin F9 on the board
-
     volatile sl_status_t sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(start_packet), start_packet);
 
     if (sc != SL_STATUS_OK) {
@@ -547,7 +544,6 @@ sl_status_t send_next_notification() {
     memcpy(packet + 1, &header, PACKET_HEADER_SIZE);
     memcpy(packet + 1 + PACKET_HEADER_SIZE, outgoing_data_ptr + outgoing_bytes_sent, cur_bytes_sent);
 
-    GPIO_PinOutToggle(LDMA_OUTPUT_0_PORT, LDMA_OUTPUT_0_PIN); // this is for marking how often it enters the consumer process. pin F11 on the board
 
     sc = sl_bt_gatt_server_notify_all(gattdb_iadc_result, sizeof(packet), packet);
     if (sc == SL_STATUS_OK) {
@@ -577,6 +573,14 @@ void app_process_action(void)
       if (number_transmissions == 0) {
           GPIO_PinOutSet(UIF_LED0_PORT, UIF_LED0_PIN);
       }
+
+      number_transmissions++;
+
+       if (number_transmissions == 4) {
+           GPIO_PinOutClear(UIF_LED0_PORT, UIF_LED0_PIN);
+           number_transmissions = 0;
+       }
+
 
 
           int i = 0;
@@ -705,14 +709,6 @@ void sl_bt_on_event(sl_bt_msg_t *evt)
                 tx_in_progress = false;
 //                sampleQLengths[sq_len_idx++] = ring_buffer_length(sampleQidx);
 //                sq_len_idx %= 500;
-
-                number_transmissions++;
-
-                if (number_transmissions == 10) {
-                    GPIO_PinOutClear(UIF_LED0_PORT, UIF_LED0_PIN);
-                    number_transmissions = 0;
-                }
-
 
 
 

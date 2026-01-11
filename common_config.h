@@ -25,7 +25,7 @@ typedef struct {
 #define NUM_LEVELS 12 // should be ceil(log2(COMPRESS_AT_A_TIME)), always!!!
 #define TEST_WAVELET "db4"
 #define NUM_CHANNELS 1
-#define MAX_CODEWORDS COMPRESS_AT_A_TIME/2
+#define MAX_CODEWORDS COMPRESS_AT_A_TIME
 #define COMPRESSION_RATIO 0.1
 
 // some bluetooth definitions, just for clarity
