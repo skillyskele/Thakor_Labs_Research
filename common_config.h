@@ -17,7 +17,7 @@ typedef struct {
 } SampleSlotType;
 
 // compression specs
-#define COMPRESSION_THRESHOLD 80
+#define COMPRESSION_THRESHOLD 6032
 #define N_COMPRESSION   COMPRESSION_THRESHOLD
 #define COMPRESS_AT_A_TIME N_COMPRESSION // must be N_COMPRESSION * NUM_SAMPLES
 
@@ -26,7 +26,7 @@ typedef struct {
 #define TEST_WAVELET "db4"
 #define NUM_CHANNELS 1
 #define MAX_CODEWORDS COMPRESS_AT_A_TIME
-#define COMPRESSION_RATIO 0.1
+#define COMPRESSION_RATIO 0.01
 
 // some bluetooth definitions, just for clarity
 typedef enum {

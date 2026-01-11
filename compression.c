@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "wavedec.h"
 #include "compression.h"
+#include "dwt.h"
 
 
 
@@ -25,8 +26,8 @@ int wt_pool_used[MAX_WT_OBJECTS] = {0}; // Track usage
 
 */
 
-void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, COMPRESSION_TYPE* data, int signal_length, int num_levels, int num_channels,
-              CodewordEntry* codeword_entries, int* num_codewords, COEFFICIENT_TYPE* final_quant, int *compressed_signal_length)
+void compress(wt_object wave_transform, COEFFICIENT_TYPE cr, COMPRESSION_TYPE* data, int signal_length, int num_channels,
+              volatile CodewordEntry* codeword_entries, int* num_codewords, COEFFICIENT_TYPE* final_quant, int *compressed_signal_length)
 {
 
 
@@ -37,14 +38,12 @@ void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, C
 
     // grab mean of each channel of the data
     // save the means used to demean the data later
-    COMPRESSION_TYPE means[num_channels];
     for (int i = 0; i < num_channels; i++) {
         COMPRESSION_TYPE sum = 0;
         for (int j = 0; j < signal_length; j++) {
             sum += data[i*signal_length + j];
         }
         COMPRESSION_TYPE mean = sum / signal_length;
-        means[i] = mean;
         // demean the data
         for (int j = 0; j < signal_length; j++) {
             data[i*signal_length + j] -= mean;
@@ -158,7 +157,7 @@ void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, C
         }
 
 
-        if (((cr - tolerance) < bpp) && (bpp < (cr + tolerance)) || iterations > 50) {
+        if ((((cr - tolerance) < bpp) && (bpp < (cr + tolerance))) || iterations > 50) {
             searching = false;
 
             // fill up the codeword entries, and the number of codewords

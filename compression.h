@@ -9,8 +9,8 @@ extern "C" {
 #endif
 
 
-void compress(wave_object wave, wt_object wave_transform, COEFFICIENT_TYPE cr, COMPRESSION_TYPE* data, int signal_length, int num_levels, int num_channels,
-              CodewordEntry* codeword_entries, int* num_codewords, COEFFICIENT_TYPE* final_quant, int *compressed_signal_length);
+void compress(wt_object wave_transform, COEFFICIENT_TYPE cr, COMPRESSION_TYPE* data, int signal_length, int num_channels,
+              volatile CodewordEntry* codeword_entries, int* num_codewords, COEFFICIENT_TYPE* final_quant, int *compressed_signal_length);
 
 #ifdef __cplusplus
 }

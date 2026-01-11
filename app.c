@@ -109,9 +109,7 @@ static uint8_t number_transmissions = 0;
 
 
 //static rbd_t compressedQidx;
-static bool compress_trigger;
 static COMPRESSION_TYPE compressionTemp[COMPRESS_AT_A_TIME];
-static uint8_t curIdx;
 
 static uint8_t samples_lost = 0;
 
@@ -131,7 +129,7 @@ uint32_t outgoing_total_bytes;
 uint32_t outgoing_bytes_sent;
 uint8_t  outgoing_packet_id;
 bool     tx_in_progress = false;
-volatile static CodewordEntry codeword_results[MAX_CODEWORDS];  // this must be global, like compressionTemp in the other non-compression branch.
+static volatile CodewordEntry codeword_results[MAX_CODEWORDS];  // this must be global, like compressionTemp in the other non-compression branch.
 
 
 volatile ble_transfer_state_t transfer_state = BLE_TRANSFER_IDLE;
@@ -473,17 +471,7 @@ typedef struct __attribute__((packed)) {
 #define PACKET_TYPE_DATA  0x02
 
 
-void start_ble_transfer(uint8_t* data, uint32_t total_bytes, COEFFICIENT_TYPE* quant, int* book_keeping)
-{
-    if (tx_in_progress) return;
-    outgoing_data_ptr = data;
-    outgoing_total_bytes = total_bytes;
-    outgoing_bytes_sent = 0;
-    outgoing_packet_id = 0;
-    tx_in_progress = true;
-    transfer_state = BLE_TRANSFER_SENDING_HEADER;
-    send_start_packet(quant, book_keeping);
-}
+
 void send_start_packet(COEFFICIENT_TYPE* quant, int* book_keeping) {
   // fill up the start_header
     StartHeader start_header;
@@ -512,6 +500,18 @@ void send_start_packet(COEFFICIENT_TYPE* quant, int* book_keeping) {
     }
 
 
+}
+
+void start_ble_transfer(uint8_t* data, uint32_t total_bytes, COEFFICIENT_TYPE* quant, int* book_keeping)
+{
+    if (tx_in_progress) return;
+    outgoing_data_ptr = data;
+    outgoing_total_bytes = total_bytes;
+    outgoing_bytes_sent = 0;
+    outgoing_packet_id = 0;
+    tx_in_progress = true;
+    transfer_state = BLE_TRANSFER_SENDING_HEADER;
+    send_start_packet(quant, book_keeping);
 }
 
 
@@ -590,23 +590,23 @@ void app_process_action(void)
               ring_buffer_get(sampleQidx, &sampleQElem);
 
               for (int j = 0; j < NUM_SAMPLES; j++) {
-                  compressionTemp[curIdx*NUM_SAMPLES + j] = (COMPRESSION_TYPE) sampleQElem.samples[j];
+                  compressionTemp[i*NUM_SAMPLES + j] = (COMPRESSION_TYPE) sampleQElem.samples[j];
               }
 
               i++;
 
-              curIdx++;
+
 
           }
           //blueToothNotif = true;
-          curIdx = 0;
+
 
           COEFFICIENT_TYPE quant;
           int num_nnz;
           int compressed_signal_length;
 
 
-          compress(wave, wave_transform, COMPRESSION_RATIO, compressionTemp, COMPRESS_AT_A_TIME, NUM_LEVELS,
+          compress(wave_transform, COMPRESSION_RATIO, compressionTemp, COMPRESS_AT_A_TIME,
                    NUM_CHANNELS, codeword_results, &num_nnz, &quant, &compressed_signal_length);
 
           start_ble_transfer((uint8_t*)codeword_results, (uint32_t) num_nnz*sizeof(CodewordEntry), &quant, wave_transform->length);
