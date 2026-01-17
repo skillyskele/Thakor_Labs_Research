@@ -455,6 +455,7 @@ typedef struct __attribute__((packed)) {
                                 // What is the original signal length? It's the wave_transform->outlength, which represents the length of the sparse representation coefficients, whose calculation can be found in wavedec.c
                                 // Is type must be large enough to represent the max output length. For example, for a signal chunk of 6000, we expect
     uint8_t num_levels;
+    COMPRESSION_TYPE mean;
     int book_keeping[NUM_LEVELS + 1]; // it's better to send the book keeping vector for python to reconstruct with!
 } StartHeader; // size is NUM_LEVELS amount of int + one float.
 
@@ -463,8 +464,8 @@ typedef struct __attribute__((packed)) {
     uint8_t flags;
 } PacketHeader;
 
-#define BUFFER_MEMBER_SIZE sizeof(CodewordEntry) // it's 8 bytes
-#define PACKET_HEADER_SIZE sizeof(PacketHeader) // 3 bytes
+#define BUFFER_MEMBER_SIZE sizeof(CodewordEntry) // it's 4 bytes
+#define PACKET_HEADER_SIZE sizeof(PacketHeader) // 2 bytes
 #define MAX_BYTES_PER_NOTIFICATION (gattdb_iadc_result_len - 1 - PACKET_HEADER_SIZE)
 
 #define PACKET_TYPE_START 0x01
@@ -472,11 +473,12 @@ typedef struct __attribute__((packed)) {
 
 
 
-void send_start_packet(COEFFICIENT_TYPE* quant, int* book_keeping) {
+void send_start_packet(COEFFICIENT_TYPE* quant, int* book_keeping, COMPRESSION_TYPE* mean) {
   // fill up the start_header
     StartHeader start_header;
     start_header.quant = *quant;
     start_header.num_levels = NUM_LEVELS + 1;
+    start_header.mean = *mean;
     for (int i = 0; i < NUM_LEVELS + 1; i++) {
         start_header.book_keeping[i] = book_keeping[i];
     }
@@ -502,7 +504,7 @@ void send_start_packet(COEFFICIENT_TYPE* quant, int* book_keeping) {
 
 }
 
-void start_ble_transfer(uint8_t* data, uint32_t total_bytes, COEFFICIENT_TYPE* quant, int* book_keeping)
+void start_ble_transfer(uint8_t* data, uint32_t total_bytes, COEFFICIENT_TYPE* quant, int* book_keeping, COMPRESSION_TYPE* mean)
 {
     if (tx_in_progress) return;
     outgoing_data_ptr = data;
@@ -511,7 +513,7 @@ void start_ble_transfer(uint8_t* data, uint32_t total_bytes, COEFFICIENT_TYPE* q
     outgoing_packet_id = 0;
     tx_in_progress = true;
     transfer_state = BLE_TRANSFER_SENDING_HEADER;
-    send_start_packet(quant, book_keeping);
+    send_start_packet(quant, book_keeping, mean);
 }
 
 
@@ -604,12 +606,13 @@ void app_process_action(void)
           COEFFICIENT_TYPE quant;
           int num_nnz;
           int compressed_signal_length;
+          COMPRESSION_TYPE mean;
 
 
           compress(wave_transform, COMPRESSION_RATIO, compressionTemp, COMPRESS_AT_A_TIME,
-                   NUM_CHANNELS, codeword_results, &num_nnz, &quant, &compressed_signal_length);
+                   NUM_CHANNELS, codeword_results, &num_nnz, &quant, &compressed_signal_length, &mean);
 
-          start_ble_transfer((uint8_t*)codeword_results, (uint32_t) num_nnz*sizeof(CodewordEntry), &quant, wave_transform->length);
+          start_ble_transfer((uint8_t*)codeword_results, (uint32_t) num_nnz*sizeof(CodewordEntry), &quant, wave_transform->length, &mean);
 
 
 

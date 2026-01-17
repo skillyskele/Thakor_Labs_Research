@@ -27,7 +27,7 @@ int wt_pool_used[MAX_WT_OBJECTS] = {0}; // Track usage
 */
 
 void compress(wt_object wave_transform, COEFFICIENT_TYPE cr, COMPRESSION_TYPE* data, int signal_length, int num_channels,
-              volatile CodewordEntry* codeword_entries, int* num_codewords, COEFFICIENT_TYPE* final_quant, int *compressed_signal_length)
+              volatile CodewordEntry* codeword_entries, int* num_codewords, COEFFICIENT_TYPE* final_quant, int *compressed_signal_length, COMPRESSION_TYPE* mean)
 {
 
 
@@ -43,10 +43,10 @@ void compress(wt_object wave_transform, COEFFICIENT_TYPE cr, COMPRESSION_TYPE* d
         for (int j = 0; j < signal_length; j++) {
             sum += data[i*signal_length + j];
         }
-        COMPRESSION_TYPE mean = sum / signal_length;
+        *mean = sum / signal_length;
         // demean the data
         for (int j = 0; j < signal_length; j++) {
-            data[i*signal_length + j] -= mean;
+            data[i*signal_length + j] -= *mean;
         }
     }
 

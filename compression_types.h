@@ -17,7 +17,7 @@ typedef float COMPRESSION_TYPE;
 
 
 typedef struct {
-    int16_t idx;
+    uint16_t idx;
     int16_t codeword;
 } CodewordEntry;
 

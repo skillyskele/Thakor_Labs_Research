@@ -26,7 +26,7 @@ typedef struct {
 #define TEST_WAVELET "db4"
 #define NUM_CHANNELS 1
 #define MAX_CODEWORDS COMPRESS_AT_A_TIME
-#define COMPRESSION_RATIO 0.01
+#define COMPRESSION_RATIO 0.3
 
 // some bluetooth definitions, just for clarity
 typedef enum {
